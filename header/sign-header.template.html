@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign the Divine Videos header</title>
+<style>
+  :root { --ink:#1c2733; --muted:#5b6876; --line:#d9dee4; --bg:#f7f5f0; --card:#fff; --ok:#1f7a4a; --bad:#b3261e; --warn:#8a5a00; --accent:#17324d; --code:#f1f3f5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#e6e9ed; --muted:#9aa5b1; --line:#2e3742; --bg:#14181d; --card:#1b2027; --ok:#5cc28a; --bad:#f08a80; --warn:#e0b25c; --accent:#8fb8de; --code:#11151a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 28px 16px 60px; }
+  h1 { font-size: 1.5rem; margin: 0 0 6px; }
+  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  h3 { font-size: .95rem; margin: 14px 0 6px; }
+  p { margin: 0 0 10px; }
+  .lede { color: var(--muted); margin-bottom: 20px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:16px; }
+  button { font:inherit; font-weight:600; padding:10px 16px; border-radius:8px; border:1px solid var(--accent); background:var(--accent); color:var(--card); cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  ul.checks { list-style:none; padding:0; margin:0; }
+  ul.checks li { padding:4px 0 4px 26px; position:relative; }
+  ul.checks li::before { position:absolute; left:0; top:4px; font-weight:700; }
+  li.ok::before { content:"✓"; color:var(--ok); }
+  li.bad::before { content:"✗"; color:var(--bad); }
+  li.warn::before { content:"!"; color:var(--warn); }
+  li.wait::before { content:"…"; color:var(--muted); }
+  .status { margin-top:10px; font-weight:600; }
+  .status.ok { color:var(--ok); } .status.bad { color:var(--bad); } .status.warn { color:var(--warn); }
+  code, pre { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; max-height:340px; margin:8px 0 0; white-space:pre-wrap; word-break:break-word; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  td.mono { white-space: normal; }
+  details summary { cursor:pointer; font-weight:600; color:var(--accent); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sign the "Divine Videos" header</h1>
+  <p class="lede">This page holds one prepared DList header and the two URL templates it links through. It checks them against two example items built from real Divine events, asks your browser's nostr signer to sign the templates and then the header, publishes each to <span class="mono">wss://dcosl.brainstorm.world</span> and reads it back. Your key never leaves your signer. Nothing is sent anywhere until you press a button.</p>
+
+  <section>
+    <h2>1. The header is well formed</h2>
+    <ul class="checks" id="checks"></ul>
+    <details style="margin-top:10px"><summary>Fields this header declares</summary>
+      <div class="scroll"><table id="fields"><thead><tr><th>Field</th><th>Level</th><th>Type</th><th>Shown as</th><th>Meaning</th></tr></thead><tbody></tbody></table></div>
+    </details>
+  </section>
+
+  <section>
+    <h2>2. The URL templates are safe and match the header</h2>
+    <p>Each template is a kind 9999 item in the URL Templates list. The header names it by event id, so once published it can never be changed under this list.</p>
+    <ul class="checks" id="tplChecks"></ul>
+    <div class="scroll"><table id="tplTable"><thead><tr><th>Template</th><th>Pattern</th><th>Filled from</th><th>On the relay</th></tr></thead><tbody></tbody></table></div>
+    <div class="row" style="margin-top:12px"><button class="secondary" id="tplLookup">Look for them on the relay</button></div>
+    <div class="status" id="tplLookupStatus"></div>
+  </section>
+
+  <section>
+    <h2>3. Example items fit the header</h2>
+    <p>The bot will build items like these. They are not signed or published from this page; they are here so the header can be checked against real data first.</p>
+    <div id="examples"></div>
+  </section>
+
+  <section>
+    <h2>4. Your signer</h2>
+    <p>The header's address includes your public key, so it and the templates must be signed by this account:</p>
+    <p class="mono" id="expected"></p>
+    <div class="row"><button id="connect">Check my signer</button></div>
+    <div class="status" id="signerStatus"></div>
+  </section>
+
+  <section>
+    <h2>5. Publish the URL templates</h2>
+    <p>Templates you already published are reused, so pressing this twice never makes duplicates. Look for them on the relay first (step 2).</p>
+    <div class="row"><button id="tplPublish" disabled>Sign and publish missing templates</button></div>
+    <div class="status" id="tplPublishStatus"></div>
+  </section>
+
+  <section>
+    <h2>6. Is there already a header at this address?</h2>
+    <p>Publishing replaces whatever header you already have at the same address.</p>
+    <div class="row"><button class="secondary" id="lookup">Look on the relay</button></div>
+    <div class="status" id="lookupStatus"></div>
+    <pre id="existing" hidden></pre>
+  </section>
+
+  <section>
+    <h2>7. Sign and publish the header</h2>
+    <p>Available once both templates have event ids. The link tags below are filled in with those ids.</p>
+    <details><summary>The exact event that will be signed</summary><pre id="preview"></pre></details>
+    <div class="row" style="margin-top:12px"><button id="publish" disabled>Sign and publish</button><button class="secondary" id="download" hidden>Save the signed event</button></div>
+    <div class="status" id="publishStatus"></div>
+    <p id="coord" class="mono"></p>
+    <pre id="signed" hidden></pre>
+  </section>
+</main>
+
+<script>
+"use strict";
+const HEADER = /*HEADER*/;
+const TEMPLATES = /*TEMPLATES*/;
+const EXAMPLES = /*EXAMPLES*/;
+const EXPECTED_PUBKEY = "b83a28b7e4e5d20bd960c5faeb6625f95529166b8bdb045d42634a2f35919450";
+const RELAY = "wss://dcosl.brainstorm.world";
+const RELAY_MAX_MESSAGE = 131072; // dcosl NIP-11 limitation.max_message_length, read 2026-10-09
+const URL_TEMPLATES_LIST = "39998:2efaa715bbb46dd5be6b7da8d7700266d11674b913b8178addb5c2e63d987331:url-templates";
+const TEMPLATE_REF = "@template:"; // placeholder in a link tag until the template's event id is known
+const DECL = ["required", "recommended", "optional", "allowed"];
+const ROLES = ["title", "summary", "image", "link", "media", "location", "fact"];
+const URL_ROLES = ["image", "link", "media"];
+const VIDEO_EXT = /\.(mp4|webm|mov|m4v)$/i; // Brainstorm's FeedVideo plays a plain <video src>, chosen by extension
+// Undeclared item tags Brainstorm hides and the bot adds on purpose.
+const ITEM_EXTRA = ["d", "z", "a", "p", "t", "alt"];
+const $ = (id) => document.getElementById(id);
+const tagsOf = (name) => HEADER.tags.filter((t) => t[0] === name);
+const dTag = (tagsOf("d")[0] || [])[1] || "";
+const coordinate = `39998:${EXPECTED_PUBKEY}:${dTag}`;
+const declared = HEADER.tags.filter((t) => DECL.includes(t[0]));
+const fieldNames = declared.map((t) => t[1]);
+const typeOf = Object.fromEntries(tagsOf("field-type").map((t) => [t[1], t[2]]));
+const tplTag = (t, name) => (t.tags.find((x) => x[0] === name) || [])[1];
+const templateIds = {}; // key -> event id, once found on the relay or published
+let signerOk = false, checksOk = false, tplLooked = false, signedEvent = null, published = false;
+
+function setStatus(el, cls, text) { el.className = "status " + cls; el.textContent = text; }
+function renderChecks(ul, list) {
+  ul.innerHTML = "";
+  for (const c of list) { const li = document.createElement("li"); li.className = c.ok === true ? "ok" : c.ok === "warn" ? "warn" : "bad"; li.textContent = c.text; ul.appendChild(li); }
+}
+function checker() {
+  const out = [];
+  return { out, add: (ok, text) => out.push({ ok: ok === "warn" ? "warn" : Boolean(ok), text }) };
+}
+
+/* ---------- URL templates: Brainstorm's rules (client/src/lib/linkTemplates.ts) ---------- */
+const VARNAME = /^[A-Za-z0-9_]+$/;
+const PLACEHOLDER = /\{([^{}]*)\}/g;
+function templatePlaceholders(template) {
+  const head = /^https:\/\/([^/?#{}]+)(\/|$)/i.exec(template);
+  if (!head) return null;
+  const names = [];
+  for (const [, name] of template.matchAll(PLACEHOLDER)) { if (!VARNAME.test(name)) return null; names.push(name); }
+  if (/[{}]/.test(template.replace(PLACEHOLDER, ""))) return null;
+  return [...new Set(names)];
+}
+const encodeValue = (v) => encodeURIComponent(v).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+function expandTemplate(template, values) {
+  const names = templatePlaceholders(template);
+  if (!names || names.some((n) => !(values[n] || "").trim())) return null;
+  const href = template.replace(PLACEHOLDER, (_, n) => encodeValue(values[n].trim()));
+  try {
+    const url = new URL(href), host = new URL(template.replace(PLACEHOLDER, "x")).host;
+    return url.protocol === "https:" && url.host === host ? url.href : null;
+  } catch (_) { return null; }
+}
+const linkTags = () => tagsOf("link");
+const templateFor = (linkTag) => TEMPLATES.find((t) => TEMPLATE_REF + t.key === linkTag[1]);
+function itemLinks(item) {
+  const first = (k) => (item.tags.find((t) => t[0] === k) || [])[1];
+  return linkTags().map((l) => {
+    const tpl = templateFor(l); if (!tpl) return null;
+    const values = {}; for (let i = 3; i + 1 < l.length; i += 2) values[l[i]] = first(l[i + 1]);
+    return { name: tplTag(tpl, "name"), href: expandTemplate(tplTag(tpl, "url-template"), values) };
+  }).filter(Boolean);
+}
+
+/* ---------- 1. header checks ---------- */
+function headerChecks() {
+  const { out, add } = checker();
+  add(HEADER.kind === 39998, "Kind is 39998 (an editable list header).");
+  add(HEADER.content === "", "Content is empty; everything is in tags.");
+  add(HEADER.tags.every((t) => Array.isArray(t) && t.length >= 2 && t.every((v) => typeof v === "string" && v.length > 0)), "Every tag is a list of non-empty text values with at least a name and a value.");
+  add(tagsOf("d").length === 1 && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(dTag), `One "d" tag, a lowercase slug: ${dTag}`);
+  const n = tagsOf("names");
+  add(n.length === 1 && n[0].length === 3 && n[0][1].trim() && n[0][2].trim(), `One "names" tag with singular and plural: ${n[0] ? n[0][1] + " / " + n[0][2] : "missing"}`);
+  add(tagsOf("description").length === 1 && tagsOf("description")[0][1].trim().length > 0, "One description.");
+  const b = tagsOf("b");
+  add(b.length === 1 && b[0][1] === coordinate && (b[0].length === 2 || b[0][2] === "pointer"),
+    "One \"b\" tag naming the header's own address, which submits it as a shared concept (a missing type reads as \"pointer\").");
+  add(fieldNames.length > 0 && fieldNames.every((x) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(x) && x.length >= 2), `${fieldNames.length} fields declared, each a lowercase kebab-case name of two or more characters.`);
+  add(new Set(fieldNames).size === fieldNames.length, "No field is declared twice.");
+  add(declared.every((t) => t.length === 3 && t[2].trim().length > 0), "Every field has a description, so the item page and the editor can explain it.");
+  const req = tagsOf("required").map((t) => t[1]);
+  add(req.length > 0 && !req.some((x) => ["p", "e", "a", "i"].includes(x)), `Required fields (${req.join(", ")}) include none of p, e, a or i, so each item is the video itself.`);
+  add(req[0] === "title", "The first required field is the title, which renderers with no display hints show as the item's name.");
+  add(!fieldNames.some((x) => ITEM_EXTRA.includes(x)), `None of the tags the bot adds without declaring (${ITEM_EXTRA.join(", ")}) is declared as a field.`);
+  const ft = tagsOf("field-type");
+  add(ft.every((t) => t.length === 3 && fieldNames.includes(t[1]) && ["text", "url"].includes(t[2])), "Every field-type names a declared field and is \"text\" or \"url\".");
+  add(new Set(ft.map((t) => t[1])).size === ft.length, "No field is typed twice.");
+  const disp = tagsOf("display");
+  add(disp.every((t) => ROLES.includes(t[1]) && fieldNames.includes(t[2]) && (t[1] === "fact" ? t.length === 3 || t.length === 4 : t.length === 3)), "Every display hint uses a known role and names a declared field.");
+  const single = disp.filter((t) => t[1] !== "fact").map((t) => t[1]);
+  add(new Set(single).size === single.length, "No display role other than fact is used twice.");
+  const roleField = Object.fromEntries(disp.filter((t) => t[1] !== "fact").map((t) => [t[1], t[2]]));
+  add(URL_ROLES.every((r) => !roleField[r] || typeOf[roleField[r]] === "url"), "The image and media hints each name a field typed url.");
+  add(["title", "summary", "image", "media"].every((r) => roleField[r]), "Title, summary, image and media hints are set, so the item page shows a poster and a player.");
+  add(linkTags().length > 0 && linkTags().every((l) => l.length >= 5 && l.length % 2 === 1 && l[2] === RELAY && templateFor(l)),
+    "Every link tag names one of this page's templates, with the dcosl relay hint and placeholder/field pairs.");
+  const img = tagsOf("image");
+  add(img.length === 0 ? "warn" : img.length === 1 && /^https:\/\//.test(img[0][1]),
+    img.length === 0 ? "No list image yet. Brainstorm shows a book icon on the list page until one is added." : "List image is a single https URL.");
+  add(tagsOf("r").some((t) => t[1] === "https://divine.video"), "A reference link to divine.video is present.");
+  const size = new TextEncoder().encode(JSON.stringify(["EVENT", { ...finalHeader(true), id: "0".repeat(64), pubkey: EXPECTED_PUBKEY, created_at: 0, sig: "0".repeat(128) }])).length;
+  add(size < RELAY_MAX_MESSAGE / 4, `Signed size is about ${size} bytes; dcosl accepts messages up to ${RELAY_MAX_MESSAGE}.`);
+  return out;
+}
+
+/* ---------- 2. template checks ---------- */
+function templateChecks() {
+  const { out, add } = checker();
+  for (const t of TEMPLATES) {
+    const pattern = tplTag(t, "url-template") || "", name = tplTag(t, "name") || "";
+    const names = templatePlaceholders(pattern);
+    add(t.kind === 9999 && t.content === "", `${name}: kind 9999, so the event can't be edited once its id is pinned.`);
+    add(t.tags.filter((x) => x[0] === "z").length === 1 && tplTag(t, "z") === URL_TEMPLATES_LIST, `${name}: filed in the URL Templates list.`);
+    add(names && names.length > 0, `${name}: starts with a literal https host and uses only {name} placeholders.`);
+    add(tplTag(t, "alt") === "URL template: " + name, `${name}: has an alt line in the list's usual form.`);
+    const uses = linkTags().filter((l) => l[1] === TEMPLATE_REF + t.key);
+    const bound = uses.length === 1 ? uses[0].slice(3).filter((_, i) => i % 2 === 0) : [];
+    const fields = uses.length === 1 ? uses[0].slice(3).filter((_, i) => i % 2 === 1) : [];
+    add(uses.length === 1 && names && bound.slice().sort().join() === names.slice().sort().join() && fields.every((f) => fieldNames.includes(f)),
+      `${name}: the header binds every placeholder (${(names || []).join(", ")}) to a declared field.`);
+  }
+  return out;
+}
+function renderTemplateTable() {
+  const tb = $("tplTable").querySelector("tbody"); tb.innerHTML = "";
+  for (const t of TEMPLATES) {
+    const use = linkTags().find((l) => l[1] === TEMPLATE_REF + t.key) || [];
+    const pairs = []; for (let i = 3; i + 1 < use.length; i += 2) pairs.push(`{${use[i]}} ← ${use[i + 1]}`);
+    const tr = document.createElement("tr");
+    const cells = [tplTag(t, "name"), tplTag(t, "url-template"), pairs.join(", "), templateIds[t.key] ? templateIds[t.key].slice(0, 16) + "…" : tplLooked ? "not yet" : "not checked"];
+    cells.forEach((v, i) => { const td = document.createElement("td"); if (i === 1 || i === 3) td.className = "mono"; td.textContent = v; tr.appendChild(td); });
+    tb.appendChild(tr);
+  }
+}
+
+/* ---------- 3. item checks ---------- */
+function npubToHex(str) {
+  // bech32 (BIP-173) decode for npub, enough to check an example item; no keys are handled here
+  const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+  const s = String(str).toLowerCase(), pos = s.lastIndexOf("1");
+  if (!s.startsWith("npub1") || pos < 1 || s.length - pos < 7) return null;
+  const data = [];
+  for (const c of s.slice(pos + 1)) { const v = CHARSET.indexOf(c); if (v < 0) return null; data.push(v); }
+  const hrp = s.slice(0, pos);
+  const G = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const v of [...[...hrp].map((c) => c.charCodeAt(0) >> 5), 0, ...[...hrp].map((c) => c.charCodeAt(0) & 31), ...data]) {
+    const top = chk >> 25; chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((top >> i) & 1) chk ^= G[i];
+  }
+  if (chk !== 1) return null;
+  let acc = 0, bits = 0; const out = [];
+  for (const v of data.slice(0, -6)) { acc = (acc << 5) | v; bits += 5; while (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); } }
+  if (out.length !== 32) return null;
+  return out.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function itemChecks(item) {
+  const { out, add } = checker();
+  const first = (k) => (item.tags.find((t) => t[0] === k) || [])[1];
+  add(item.kind === 39999 && item.content === "", "Kind 39999 with empty content.");
+  const z = item.tags.filter((t) => t[0] === "z");
+  add(z.length === 1 && z[0][1] === coordinate, "One \"z\" tag naming this header.");
+  add(item.tags.filter((t) => t[0] === "d").length === 1, "One \"d\" tag.");
+  const missing = tagsOf("required").map((t) => t[1]).filter((f) => !first(f));
+  add(missing.length === 0, missing.length ? `Missing required: ${missing.join(", ")}` : "Every required field is present.");
+  const stray = [...new Set(item.tags.map((t) => t[0]).filter((k) => !fieldNames.includes(k) && !ITEM_EXTRA.includes(k)))];
+  add(stray.length === 0, stray.length ? `Undeclared tags: ${stray.join(", ")}` : "Every tag is a declared field or one of d, z, a, p, t, alt.");
+  add(item.tags.every((t) => t.length === 2 && String(t[1]).trim() !== ""), "No tag is empty or carries extra values.");
+  const badUrl = Object.keys(typeOf).filter((f) => typeOf[f] === "url" && first(f) && !/^https:\/\//.test(first(f)));
+  add(badUrl.length === 0, badUrl.length ? `Not https: ${badUrl.join(", ")}` : "Every url field is https.");
+  const mediaField = (tagsOf("display").find((t) => t[1] === "media") || [])[2];
+  add(VIDEO_EXT.test(first(mediaField) || ""), `The ${mediaField} URL ends in .mp4, so Brainstorm plays it.`);
+  const sha = first("sha256");
+  add(!sha || (/^[0-9a-f]{64}$/.test(sha) && (first("video") || "").includes(sha)), "sha256 is 64 hex characters and matches the video URL.");
+  const a = first("a") || "";
+  const [aKind, aPubkey, ...aRest] = a.split(":"), aD = aRest.join(":");
+  add(aKind === "34236" && /^[0-9a-f]{64}$/.test(aPubkey || "") && aD, "\"a\" points at the original Divine event (kind 34236).");
+  add(first("divine-id") === aD, "divine-id is the d tag of that Divine event.");
+  const p = item.tags.filter((t) => t[0] === "p").map((t) => t[1]);
+  add(p.length === 1 && p[0] === aPubkey, "One \"p\" tag naming the account that signed the original Divine event.");
+  const npub = first("creator-npub") || "";
+  add(npubToHex(npub) === aPubkey, "creator-npub decodes to that same account.");
+  const links = itemLinks(item);
+  const video = links.find((l) => l.name === "Divine video"), profile = links.find((l) => l.name === "Divine profile");
+  add(video && video.href === "https://divine.video/video/" + aD, `Divine video link: ${video && video.href ? video.href : "not built"}`);
+  add(profile && profile.href === "https://divine.video/profile/" + npub, `Divine profile link: ${profile && profile.href ? profile.href : "not built"}`);
+  add(!!first("alt"), "Has an alt line for clients that don't know DLists.");
+  return out;
+}
+
+/* ---------- the header as it will be signed ---------- */
+function finalHeader(allowPending) {
+  const tags = HEADER.tags.map((t) => {
+    if (t[0] !== "link" || !t[1].startsWith(TEMPLATE_REF)) return t.slice();
+    const id = templateIds[t[1].slice(TEMPLATE_REF.length)];
+    if (!id && !allowPending) throw new Error("a template has no event id yet");
+    return [t[0], id || "0".repeat(64), ...t.slice(2)];
+  });
+  return { kind: HEADER.kind, content: HEADER.content, tags };
+}
+function renderPreview() {
+  const ready = TEMPLATES.every((t) => templateIds[t.key]);
+  const shown = ready ? finalHeader(false) : HEADER;
+  $("preview").textContent = (ready ? "" : "// The two link tags get the templates' event ids once they are known.\n") + JSON.stringify(shown, null, 2);
+}
+
+function runChecks() {
+  const hc = headerChecks(); renderChecks($("checks"), hc);
+  const tc = templateChecks(); renderChecks($("tplChecks"), tc);
+  let allOk = hc.every((c) => c.ok === true || c.ok === "warn") && tc.every((c) => c.ok === true);
+
+  const ex = $("examples"); ex.innerHTML = "";
+  EXAMPLES.forEach((item) => {
+    const first = (k) => (item.tags.find((t) => t[0] === k) || [])[1];
+    const h = document.createElement("h3");
+    h.textContent = `${first("platform") === "vine" ? "Classic Vine" : "Native Divine video"}: ${first("title")}`;
+    const ul = document.createElement("ul"); ul.className = "checks";
+    const ic = itemChecks(item); renderChecks(ul, ic);
+    allOk = allOk && ic.every((c) => c.ok === true);
+    const det = document.createElement("details"); det.style.marginTop = "6px";
+    const sum = document.createElement("summary"); sum.textContent = "The item's tags";
+    const pre = document.createElement("pre"); pre.textContent = JSON.stringify(item, null, 2);
+    det.append(sum, pre);
+    ex.append(h, ul, det);
+  });
+  checksOk = allOk;
+
+  const shownAs = {};
+  for (const t of tagsOf("display")) shownAs[t[2]] = (shownAs[t[2]] ? shownAs[t[2]] + ", " : "") + (t[1] === "fact" ? `fact "${t[3] || t[2]}"` : t[1]);
+  for (const l of linkTags()) { const tpl = templateFor(l); for (let i = 4; i < l.length; i += 2) shownAs[l[i]] = (shownAs[l[i]] ? shownAs[l[i]] + ", " : "") + `link "${tpl ? tplTag(tpl, "name") : "?"}"`; }
+  const tb = $("fields").querySelector("tbody"); tb.innerHTML = "";
+  for (const t of declared) {
+    const tr = document.createElement("tr");
+    for (const v of [t[1], t[0], typeOf[t[1]] || "text", shownAs[t[1]] || "", t[2] || ""]) { const td = document.createElement("td"); td.textContent = v; tr.appendChild(td); }
+    tb.appendChild(tr);
+  }
+  renderTemplateTable();
+  renderPreview();
+  $("expected").textContent = EXPECTED_PUBKEY;
+  $("coord").textContent = "Address: " + coordinate;
+  refreshButtons();
+}
+function refreshButtons() {
+  const missing = TEMPLATES.filter((t) => !templateIds[t.key]);
+  $("tplPublish").disabled = !(checksOk && signerOk && tplLooked) || missing.length === 0;
+  $("tplPublish").textContent = tplLooked && missing.length === 0 ? "Both templates have ids" : "Sign and publish missing templates";
+  $("publish").disabled = !(checksOk && signerOk) || missing.length > 0 || published;
+  $("publish").textContent = signedEvent && !published ? "Try publishing again" : "Sign and publish";
+}
+
+/* ---------- 4. signer ---------- */
+async function checkSigner() {
+  signerOk = false; refreshButtons();
+  if (!window.nostr) {
+    setStatus($("signerStatus"), "bad", "No nostr signer found in this browser. Open this page over http://localhost (not as a file) in the browser that has your signer extension, then try again.");
+    return;
+  }
+  try {
+    const pk = (await window.nostr.getPublicKey() || "").toLowerCase();
+    if (pk === EXPECTED_PUBKEY) { signerOk = true; setStatus($("signerStatus"), "ok", "Signer is on the expected account."); }
+    else setStatus($("signerStatus"), "bad", `Signer is on a different account (${pk.slice(0, 12)}…). Switch the signer to the expected account and check again. Nothing has been signed.`);
+  } catch (e) { setStatus($("signerStatus"), "bad", "The signer refused or failed: " + (e && e.message ? e.message : e)); }
+  refreshButtons();
+}
+
+/* ---------- relay helpers ---------- */
+function relayRequest(filter, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const sub = "h" + Math.random().toString(36).slice(2, 8);
+    const events = [];
+    let ws; try { ws = new WebSocket(RELAY); } catch (e) { reject(e); return; }
+    const timer = setTimeout(() => { try { ws.close(); } catch (_) {} reject(new Error("the relay did not answer in time")); }, timeoutMs);
+    ws.onopen = () => ws.send(JSON.stringify(["REQ", sub, filter]));
+    ws.onerror = () => { clearTimeout(timer); reject(new Error("could not connect to the relay")); };
+    ws.onmessage = (m) => {
+      let msg; try { msg = JSON.parse(m.data); } catch (_) { return; }
+      if (msg[0] === "EVENT" && msg[1] === sub) events.push(msg[2]);
+      if (msg[0] === "EOSE" && msg[1] === sub) { clearTimeout(timer); ws.close(); resolve(events); }
+      if (msg[0] === "CLOSED" && msg[1] === sub) { clearTimeout(timer); ws.close(); reject(new Error("the relay closed the request: " + (msg[2] || ""))); }
+    };
+  });
+}
+function relayPublish(event, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    let ws; try { ws = new WebSocket(RELAY); } catch (e) { reject(e); return; }
+    const timer = setTimeout(() => { try { ws.close(); } catch (_) {} reject(new Error("the relay did not confirm in time")); }, timeoutMs);
+    ws.onopen = () => ws.send(JSON.stringify(["EVENT", event]));
+    ws.onerror = () => { clearTimeout(timer); reject(new Error("could not connect to the relay")); };
+    ws.onmessage = (m) => {
+      let msg; try { msg = JSON.parse(m.data); } catch (_) { return; }
+      if (msg[0] === "OK" && msg[1] === event.id) { clearTimeout(timer); ws.close(); resolve({ accepted: msg[2] === true, message: msg[3] || "" }); }
+      if (msg[0] === "AUTH") { clearTimeout(timer); ws.close(); reject(new Error("the relay asked for authentication, which this page does not do")); }
+    };
+  });
+}
+const newest = (evs) => evs.slice().sort((a, b) => b.created_at - a.created_at)[0] || null;
+const sameTags = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/* ---------- 2. find templates already on the relay ---------- */
+async function lookupTemplates() {
+  const st = $("tplLookupStatus"); setStatus(st, "", "Looking…");
+  try {
+    const found = await relayRequest({ kinds: [9999], authors: [EXPECTED_PUBKEY], "#z": [URL_TEMPLATES_LIST] });
+    for (const t of TEMPLATES) {
+      // Reuse only an event with exactly these tags, oldest first, so every reader pins the same id.
+      const match = found.filter((ev) => ev.content === "" && sameTags(ev.tags, t.tags)).sort((a, b) => a.created_at - b.created_at)[0];
+      if (match) templateIds[t.key] = match.id;
+    }
+    tplLooked = true;
+    const have = TEMPLATES.filter((t) => templateIds[t.key]).length;
+    setStatus(st, have === TEMPLATES.length ? "ok" : "", have === TEMPLATES.length ? "Both templates are already on the relay. Their ids will be used." : `${have} of ${TEMPLATES.length} found. Publish the rest in step 5.`);
+  } catch (e) { setStatus(st, "bad", "Could not read the relay: " + e.message); }
+  renderTemplateTable(); renderPreview(); refreshButtons();
+}
+
+/* ---------- 5. publish missing templates ---------- */
+async function publishTemplates() {
+  $("tplPublish").disabled = true;
+  const st = $("tplPublishStatus");
+  try {
+    for (const t of TEMPLATES) {
+      if (templateIds[t.key]) continue;
+      const name = tplTag(t, "name");
+      setStatus(st, "", `Waiting for your signer (${name})…`);
+      const ev = await window.nostr.signEvent({ kind: t.kind, created_at: Math.floor(Date.now() / 1000), tags: t.tags, content: t.content, pubkey: EXPECTED_PUBKEY });
+      if (!ev || !ev.id || !ev.sig) throw new Error("the signer returned no signature");
+      if ((ev.pubkey || "").toLowerCase() !== EXPECTED_PUBKEY) throw new Error("the signer signed with a different account; nothing was published");
+      if (ev.kind !== 9999 || ev.content !== "" || !sameTags(ev.tags, t.tags)) throw new Error("the signer changed the event; nothing was published");
+      setStatus(st, "", `Publishing ${name}…`);
+      const res = await relayPublish(ev);
+      if (!res.accepted) throw new Error(`the relay rejected ${name}: ` + (res.message || "no reason given"));
+      const back = await relayRequest({ ids: [ev.id] });
+      if (!back.length || !sameTags(back[0].tags, t.tags)) throw new Error(`the relay accepted ${name} but reading it back failed; look on the relay again before going on`);
+      templateIds[t.key] = ev.id;
+      renderTemplateTable(); renderPreview();
+    }
+    setStatus(st, "ok", "Both templates are published and read back. The header can now be signed.");
+  } catch (e) { setStatus(st, "bad", "Not completed: " + (e && e.message ? e.message : e)); }
+  refreshButtons();
+}
+
+/* ---------- 6. look for an existing header ---------- */
+async function lookup() {
+  setStatus($("lookupStatus"), "", "Looking…"); $("existing").hidden = true;
+  try {
+    const ev = newest(await relayRequest({ kinds: [39998], authors: [EXPECTED_PUBKEY], "#d": [dTag] }));
+    if (!ev) setStatus($("lookupStatus"), "ok", "No header at this address yet. Publishing will create it.");
+    else {
+      setStatus($("lookupStatus"), "warn", `A header already exists here, published ${new Date(ev.created_at * 1000).toLocaleString()}. Publishing will replace it.`);
+      $("existing").textContent = JSON.stringify(ev, null, 2); $("existing").hidden = false;
+    }
+  } catch (e) { setStatus($("lookupStatus"), "bad", "Could not read the relay: " + e.message); }
+}
+
+/* ---------- 7. sign, publish, read back ---------- */
+async function signAndPublish() {
+  $("publish").disabled = true;
+  const st = $("publishStatus");
+  try {
+    const header = finalHeader(false);
+    let ev = signedEvent;
+    if (!ev) {
+      setStatus(st, "", "Waiting for your signer…");
+      ev = await window.nostr.signEvent({ kind: header.kind, created_at: Math.floor(Date.now() / 1000), tags: header.tags, content: header.content, pubkey: EXPECTED_PUBKEY });
+      if (!ev || !ev.id || !ev.sig) throw new Error("the signer returned no signature");
+      if ((ev.pubkey || "").toLowerCase() !== EXPECTED_PUBKEY) throw new Error("the signer signed with a different account; nothing was published");
+      if (ev.kind !== 39998 || ev.content !== "" || !sameTags(ev.tags, header.tags)) throw new Error("the signer changed the event; nothing was published");
+      signedEvent = ev;
+      $("signed").textContent = JSON.stringify(ev, null, 2); $("signed").hidden = false; $("download").hidden = false;
+    }
+    setStatus(st, "", "Signed. Publishing…");
+    const res = await relayPublish(ev);
+    if (!res.accepted) throw new Error("the relay rejected the event: " + (res.message || "no reason given"));
+    published = true;
+    setStatus(st, "", "Accepted. Reading it back…");
+    const back = newest(await relayRequest({ kinds: [39998], authors: [EXPECTED_PUBKEY], "#d": [dTag] }));
+    if (back && back.id === ev.id && sameTags(back.tags, ev.tags)) setStatus(st, "ok", "Published and read back from the relay, tag for tag. Event id: " + ev.id);
+    else setStatus(st, "warn", "The relay accepted the event, but reading it back returned something else. Save the signed event and check before importing items.");
+  } catch (e) {
+    setStatus(st, "bad", "Not completed: " + (e && e.message ? e.message : e));
+  }
+  refreshButtons();
+}
+function download() {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(signedEvent, null, 2)], { type: "application/json" }));
+  a.download = dTag + ".header.signed.json"; a.click();
+}
+
+$("tplLookup").addEventListener("click", lookupTemplates);
+$("connect").addEventListener("click", checkSigner);
+$("tplPublish").addEventListener("click", publishTemplates);
+$("lookup").addEventListener("click", lookup);
+$("publish").addEventListener("click", signAndPublish);
+$("download").addEventListener("click", download);
+runChecks();
+</script>
+</body>
+</html>

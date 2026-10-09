@@ -1,0 +1,11 @@
+{
+  "coordinate": "39998:b83a28b7e4e5d20bd960c5faeb6625f95529166b8bdb045d42634a2f35919450:divine-videos",
+  "headerEventId": "59d847a44d53017b3d5734702b94b45712ac000cc83f1ef9d7a0f33a7aa52ee8",
+  "publishedAt": "2026-10-09T22:36:49Z",
+  "relay": "wss://dcosl.brainstorm.world",
+  "urlTemplates": {
+    "divine-video": "97d7f683f8cfea346e389042430e1795fc6ddae25ee9dff298c95867d707b7ee",
+    "divine-profile": "f07980288c1036e748bf80070b07cc2780a295b3ee15dd8b306dfea87abafd20"
+  },
+  "verified": "Read back 2026-10-09: signatures valid, tags equal divine-videos.header.json with template ids filled in."
+}

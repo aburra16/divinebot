@@ -1,0 +1,48 @@
+[
+  {
+    "key": "divine-video",
+    "kind": 9999,
+    "content": "",
+    "tags": [
+      [
+        "z",
+        "39998:2efaa715bbb46dd5be6b7da8d7700266d11674b913b8178addb5c2e63d987331:url-templates"
+      ],
+      [
+        "name",
+        "Divine video"
+      ],
+      [
+        "url-template",
+        "https://divine.video/video/{id}"
+      ],
+      [
+        "alt",
+        "URL template: Divine video"
+      ]
+    ]
+  },
+  {
+    "key": "divine-profile",
+    "kind": 9999,
+    "content": "",
+    "tags": [
+      [
+        "z",
+        "39998:2efaa715bbb46dd5be6b7da8d7700266d11674b913b8178addb5c2e63d987331:url-templates"
+      ],
+      [
+        "name",
+        "Divine profile"
+      ],
+      [
+        "url-template",
+        "https://divine.video/profile/{npub}"
+      ],
+      [
+        "alt",
+        "URL template: Divine profile"
+      ]
+    ]
+  }
+]

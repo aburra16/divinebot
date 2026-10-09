@@ -1,0 +1,300 @@
+<title>Divine Videos Header</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: one reading column for a review document; wide tables and code scroll inside their own boxes. */
+  :root {
+    --bg: #f5f7f8; --surface: #ffffff; --fg: #17222b; --muted: #5a6872; --line: #dce3e7;
+    --accent: #0f6e66; --accent-soft: #e2f1ef; --warn: #8a5a00; --warn-soft: #fbf1dc; --code: #eef2f4;
+    --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+    --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #10161b; --surface: #182128; --fg: #e3e9ed; --muted: #97a6b0; --line: #2a3640; --accent: #5cc9bd; --accent-soft: #15302e; --warn: #e3b75e; --warn-soft: #2e2615; --code: #0c1216; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #10161b; --surface: #182128; --fg: #e3e9ed; --muted: #97a6b0; --line: #2a3640; --accent: #5cc9bd; --accent-soft: #15302e; --warn: #e3b75e; --warn-soft: #2e2615; --code: #0c1216; color-scheme: dark; }
+
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font: 17px/1.6 var(--body); padding-inline: 16px; padding-block: 40px 72px; }
+  .wrap { max-width: 880px; margin: 0 auto; display: grid; gap: 44px; }
+  h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(2rem, 5vw, 2.8rem); letter-spacing: -0.01em; }
+  h2 { font-size: 1.45rem; }
+  h3 { font-size: 1.08rem; }
+  p { margin: 0; max-width: 68ch; }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  section { display: grid; gap: 14px; }
+  .eyebrow { font: 600 0.78rem/1 var(--body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .mono, code, pre { font-family: var(--mono); font-size: 0.82rem; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .lede { font-size: 1.12rem; color: var(--muted); }
+
+  header.top { display: grid; gap: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { font: 600 0.8rem/1 var(--body); padding: 6px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); }
+  .coord { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-wrap: anywhere; }
+
+  dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; margin: 0; }
+  dl.facts dt { color: var(--muted); }
+  dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  @media (max-width: 560px) { dl.facts { grid-template-columns: 1fr; gap: 2px; } dl.facts dd { margin-bottom: 10px; } }
+
+  .asks { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; }
+  .asks li { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 12px 14px; display: grid; gap: 4px; }
+  .asks b { font-weight: 600; }
+
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { font-weight: 600; color: var(--muted); background: var(--bg); position: sticky; top: 0; }
+  td.f { font-family: var(--mono); font-size: 0.82rem; white-space: nowrap; }
+  td.mono-cell { font-family: var(--mono); font-size: 0.78rem; overflow-wrap: anywhere; min-width: 12rem; }
+  .lvl { font: 600 0.72rem/1 var(--body); letter-spacing: 0.05em; text-transform: uppercase; padding: 4px 7px; border-radius: 4px; white-space: nowrap; }
+  .lvl.required { background: var(--accent); color: var(--surface); }
+  .lvl.recommended { background: var(--accent-soft); color: var(--accent); }
+  .lvl.optional { border: 1px solid var(--line); color: var(--muted); }
+
+  .mock-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  @media (max-width: 720px) { .mock-grid { grid-template-columns: 1fr; } }
+  .mock { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 12px; min-width: 0; }
+  .mock .kicker { font-size: 0.82rem; color: var(--muted); }
+  .mock .who { display: flex; gap: 10px; align-items: center; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--accent-soft); flex: none; display: grid; place-items: center; color: var(--accent); font: 700 0.9rem var(--display); }
+  .mock h3 { font-size: 1.2rem; overflow-wrap: anywhere; }
+  .mock .sum { color: var(--muted); }
+  .btn { display: inline-block; font: 600 0.85rem/1 var(--body); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--accent); color: var(--accent); background: transparent; }
+  .mock dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 0.9rem; }
+  .mock dt { color: var(--muted); }
+  .mock dd { margin: 0; overflow-wrap: anywhere; }
+  .player { aspect-ratio: 9 / 16; max-height: 300px; max-width: 100%; margin: 0 auto; width: auto; height: 300px; border-radius: 10px; background: repeating-linear-gradient(135deg, var(--code) 0 10px, var(--line) 10px 20px); display: grid; place-items: center; color: var(--muted); font-size: 0.82rem; text-align: center; padding: 12px; }
+  .more { font-size: 0.85rem; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 10px; }
+  .map { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; font-size: 0.95rem; }
+  .map li { display: grid; grid-template-columns: 7.5rem 1fr; gap: 10px; }
+  .map li span:first-child { color: var(--muted); }
+
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tab { font: 600 0.88rem/1 var(--body); padding: 9px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+  .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 0; overflow: auto; max-height: 460px; white-space: pre; line-height: 1.5; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button.copy { font: 600 0.88rem/1 var(--body); padding: 9px 14px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--surface); cursor: pointer; }
+  .copied { color: var(--accent); font-weight: 600; font-size: 0.9rem; }
+  ul.plain { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 70ch; }
+  footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); padding-top: 16px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">DList header · draft for review</span>
+    <h1>Divine Videos</h1>
+    <div class="chips"><span class="chip warn">Not signed yet</span><span class="chip">Kind 39998</span><span class="chip">Shared concept</span></div>
+    <p class="lede">A decentralized list of the short looping videos posted on Divine (divine.video), including the classic Vines Divine restored. Avi signs this header once. A dedicated curator bot then files one item per video under it, so the list renders on brainstorm.world with a poster, a player and a link back to Divine.</p>
+    <div class="coord mono" id="coord"></div>
+  </header>
+
+  <section>
+    <span class="eyebrow">Round 1 feedback</span>
+    <h2>What changed after review</h2>
+    <ul class="asks">
+      <li><b>Title is the first required field.</b><span>Renderers with no display hints show the first required field as the item's name, so <code>title</code> leads and <code>video</code> follows. One side effect for Vinney: Brainstorm's "also listed by" matches items on the first required value, so unrelated videos with the same title (a lot of Vines are titled "lol") would show as the same thing. Worth keying that on something else.</span></li>
+      <li><b>Links come from URL templates.</b><span>Two 9999 items in the URL Templates list, pinned by event id: <em>Divine video</em> filled from a new <code>divine-id</code> field, and <em>Divine profile</em> filled from <code>creator-npub</code>. Items no longer carry <code>divine-url</code>, <code>creator-page</code> or <code>vine-url</code>. If Divine changes its URL scheme, one header edit fixes every link.</span></li>
+      <li><b>Why <code>divine-id</code> and not <code>sha256</code>.</b><span>Divine's video page opens native videos by file hash, but a classic Vine only opens by its Vine id: the hash URL returns "Video not found". <code>divine-id</code> is the Divine event's own <code>d</code> tag, which works for both.</span></li>
+      <li><b>No vine.co link.</b><span>vine.co still answers, but with the old Vine app shell, and nothing showed it plays. On a Vine item, <code>divine-id</code> already holds the Vine id.</span></li>
+      <li><b><code>vine-likes</code> is a fact</b> next to <code>vine-loops</code>.</li>
+      <li><b>List image: the Twemoji clapper board.</b><span>Same pattern as NosFabrica's copy of Food and Drink Places, an SVG on jsDelivr. Divine's own logo is left out because its brand guidelines grant no third-party use and it would read as Divine endorsing the list. If the Divine team offers a logo later, it is a one-line change and a re-sign. An <code>r</code> tag links the Twemoji licence (CC BY 4.0).</span></li>
+      <li><b>The header is replaceable.</b><span>Only its address is fixed. Renaming a field later means the bot republishes its items, so names are still worth settling now.</span></li>
+      <li><b>David's <code>o</code> tag.</b><span>Display and link hints stay in the header for now, since that is where Brainstorm reads them. If the convention lands they can move to a UI event with <code>["o", &lt;header address&gt;, "UI"]</code>; field declarations and types are schema and would stay here.</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="eyebrow">Still open</span>
+    <h2>Questions for the team</h2>
+    <ul class="asks">
+      <li><b>The <code>p</code> tag.</b><span>Kept for now. It is the standard nostr link to the creator, and a few nostr apps might show a mention notification.</span></li>
+      <li><b>Classic Vines.</b><span>About 2.22 million. Native videos first (about 51 thousand), then Vines once we know dcosl can hold them. Who confirms capacity?</span></li>
+      <li><b>Brainstorm registration.</b><span>The item page with a player needs the coordinate in <code>dictionary.config.json</code>, with <code>search</code> left off so queries containing "video" don't all match this list.</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="eyebrow">At a glance</span>
+    <h2>The list</h2>
+    <dl class="facts">
+      <dt>Name</dt><dd id="names"></dd>
+      <dt>Description</dt><dd id="desc"></dd>
+      <dt>Header signed by</dt><dd>Avi's key, from a local signing page with a NIP-07 extension, along with the two URL templates. A leaked bot key can't change the definition.</dd>
+      <dt>Items signed by</dt><dd>A new curator account made for this list. Its profile will say it's automated.</dd>
+      <dt>Published to</dt><dd><code>wss://dcosl.brainstorm.world</code>, then the search relay</dd>
+      <dt>Source</dt><dd><code>wss://relay.divine.video</code>, kind 34236 events. Videos are stored on Divine's Blossom server, <code>media.divine.video</code></dd>
+      <dt>Scale</dt><dd>About 2.27 million videos on 2026-10-09: about 51 thousand native, about 2.22 million classic Vines. Roughly 280 new native videos a day.</dd>
+      <dt>Shared concept</dt><dd><code>["b", &lt;own address&gt;]</code> submits the header as a shared concept others can affiliate with.</dd>
+    </dl>
+  </section>
+
+  <section>
+    <span class="eyebrow">Schema</span>
+    <h2>Fields</h2>
+    <p>Each item is the video itself, so no field is a pointer to another event. URL fields are typed <code>url</code> so Brainstorm renders them as links. Every field carries a description, which Brainstorm shows in its editor.</p>
+    <div class="scroll"><table id="fields"><thead><tr><th>Field</th><th>Level</th><th>Type</th><th>Shown as</th><th>Meaning</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Rendering</span>
+    <h2>How an item reads on Brainstorm</h2>
+    <p>Brainstorm draws an item page from the header's display hints. The mock on the left uses the classic Vine example below; the list on the right is which field feeds each part.</p>
+    <div class="mock-grid">
+      <div class="mock" aria-label="Mock of a Brainstorm item page">
+        <span class="kicker">Divine Video in Divine Videos</span>
+        <div class="who"><span class="avatar" aria-hidden="true" title="thumbnail">▶</span><div><h3 id="m-title"></h3><div class="sum" id="m-sum"></div></div></div>
+        <div class="row"><span class="btn">Divine video</span><span class="btn">Divine profile</span></div>
+        <dl id="m-facts"></dl>
+        <div class="player">MP4 plays here, muted until tapped, with the thumbnail as its poster</div>
+        <div class="more">More fields: description, creator-npub, divine-id, sha256, dimensions, vine-creator-id, language…</div>
+      </div>
+      <ul class="map">
+        <li><span>Title</span><span><code>title</code></span></li>
+        <li><span>Under the title</span><span><code>creator</code></span></li>
+        <li><span>Picture, poster</span><span><code>thumbnail</code>. Shown as a small round picture at the top and as the video's poster.</span></li>
+        <li><span>Player</span><span><code>video</code>. Brainstorm plays a URL only if it ends in a video extension, so items use the <code>.mp4</code> form of the Blossom address.</span></li>
+        <li><span>Link buttons</span><span>Two URL templates: <em>Divine video</em> from <code>divine-id</code>, <em>Divine profile</em> from <code>creator-npub</code>. Brainstorm builds them; the item carries only the ids.</span></li>
+        <li><span>Facts</span><span><code>creator-nip05</code> as Handle, <code>published</code> as Posted, <code>duration</code> as Seconds, <code>platform</code>, <code>vine-loops</code>, <code>vine-likes</code></span></li>
+        <li><span>Hidden</span><span><code>a</code>, <code>p</code>, <code>t</code> and <code>alt</code>. They serve other nostr clients and relay queries.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Links</span>
+    <h2>URL templates</h2>
+    <p>Each template is a kind 9999 item in the URL Templates list (<code>39998:2efaa715…:url-templates</code>), signed by Avi. The header names it by event id, so it can't be edited under this list. Templates follow the list's rules: a literal https host, then <code>{name}</code> placeholders that Brainstorm percent-encodes.</p>
+    <div class="scroll"><table id="tpls"><thead><tr><th>Template</th><th>Pattern</th><th>Filled from</th><th>Native example</th><th>Classic Vine example</th></tr></thead><tbody></tbody></table></div>
+    <details><summary class="eyebrow" style="cursor:pointer">The two template events</summary><pre id="tpljson"></pre></details>
+  </section>
+
+  <section>
+    <span class="eyebrow">Identity</span>
+    <h2>Linking each video to its creator</h2>
+    <p>Divine hides nostr from its users. Most sign in with an email, and Divine's login service creates and holds a key for them. Each video is still signed by that account's own key, so the signer of the Divine event is the creator.</p>
+    <ul class="plain">
+      <li><b>The npub is the identity that lasts.</b> Divine is building key export, and its terms treat the keypair as the account. Usernames like <code>alice@divine.video</code> are optional, and Divine's terms say it can revoke or reassign them.</li>
+      <li><b>Classic Vines</b> are signed by one archive key per original creator, which Divine holds until that creator claims the account. The field descriptions say so.</li>
+      <li><b>Custody limits what the signature proves.</b> It shows which Divine account posted a video, not which person.</li>
+      <li><b>On every item</b>: <code>p</code> (creator's pubkey), <code>creator</code>, <code>creator-npub</code>, and <code>creator-nip05</code> only when it resolves to the same pubkey when the item is built. The profile link is built from the npub, so it survives a username change.</li>
+      <li><b>Not treated as creators</b>: "inspired by" credits, collaborators, and people who repost.</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="eyebrow">Real data</span>
+    <h2>Example items</h2>
+    <p>Two items built from live Divine events, one native video and one classic Vine. They show the item shape for review and are not published.</p>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <pre id="example" role="tabpanel"></pre>
+  </section>
+
+  <section>
+    <span class="eyebrow">Bot rules</span>
+    <h2>What the curator bot will and won't list</h2>
+    <ul class="plain">
+      <li><b>One item per Divine video</b>, kind 39999, filed under this header with one <code>z</code> tag. Re-running the bot updates an item in place.</li>
+      <li><b>Skipped</b>: videos the creator flagged with a content warning, videos whose event expires, and videos whose file or thumbnail no longer loads.</li>
+      <li><b>Deleted in turn</b>: when Divine's relay carries a deletion for a video, the bot deletes its item (kind 5).</li>
+      <li><b>Not copied</b>: the media itself. Items point at Divine's files.</li>
+      <li><b>Order of work</b>: a 150-item pilot, then the native videos with ongoing sync, then classic Vines once capacity is confirmed.</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="eyebrow">Exact event</span>
+    <h2>The header Avi will sign</h2>
+    <p>Avi first signs the two URL templates (or reuses them if they are already on the relay). Their event ids replace the <code>@template:</code> placeholders in the two <code>link</code> tags, then the header is signed. The <code>id</code>, <code>pubkey</code>, <code>created_at</code> and <code>sig</code> are added at signing.</p>
+    <div class="row"><button class="copy" id="copy" type="button">Copy JSON</button><span class="copied" id="copied" hidden>Copied</span></div>
+    <pre id="json"></pre>
+  </section>
+
+  <footer>Prepared 2026-10-09. Divine facts were read live from relay.divine.video and Divine's public docs that day. Brainstorm rendering rules come from Brainstorm-UI <code>staging</code> as of the same date.</footer>
+</div>
+
+<script>
+"use strict";
+const HEADER = /*HEADER*/;
+const EXAMPLES = /*EXAMPLES*/;
+const TEMPLATES = /*TEMPLATES*/;
+const $ = (id) => document.getElementById(id);
+const tags = (n) => HEADER.tags.filter((t) => t[0] === n);
+const pubkey = "b83a28b7e4e5d20bd960c5faeb6625f95529166b8bdb045d42634a2f35919450";
+const d = tags("d")[0][1];
+$("coord").textContent = `39998:${pubkey}:${d}`;
+$("names").textContent = `${tags("names")[0][1]} / ${tags("names")[0][2]} (d = ${d})`;
+$("desc").textContent = tags("description")[0][1];
+
+const typeOf = Object.fromEntries(tags("field-type").map((t) => [t[1], t[2]]));
+const shown = {};
+for (const t of tags("display")) shown[t[2]] = (shown[t[2]] ? shown[t[2]] + ", " : "") + (t[1] === "fact" ? `fact "${t[3] || t[2]}"` : t[1]);
+const tplName = (t) => t.tags.find((x) => x[0] === "name")[1];
+const tplPattern = (t) => t.tags.find((x) => x[0] === "url-template")[1];
+const links = tags("link").map((l) => ({ tpl: TEMPLATES.find((t) => "@template:" + t.key === l[1]), pairs: l.slice(3).reduce((acc, v, i, a) => (i % 2 === 0 ? acc.concat([[v, a[i + 1]]]) : acc), []) }));
+for (const l of links) for (const [, f] of l.pairs) shown[f] = (shown[f] ? shown[f] + ", " : "") + `link "${tplName(l.tpl)}"`;
+const fill = (item, l) => l.pairs.reduce((url, [ph, f]) => url.replace("{" + ph + "}", encodeURIComponent((item.tags.find((t) => t[0] === f) || [])[1] || "")), tplPattern(l.tpl));
+const ttb = $("tpls").querySelector("tbody");
+const nat = EXAMPLES.find((i) => (i.tags.find((t) => t[0] === "platform") || [])[1] !== "vine");
+const vin = EXAMPLES.find((i) => (i.tags.find((t) => t[0] === "platform") || [])[1] === "vine");
+for (const l of links) {
+  const tr = document.createElement("tr");
+  [tplName(l.tpl), tplPattern(l.tpl), l.pairs.map(([ph, f]) => `{${ph}} ← ${f}`).join(", "), fill(nat, l), fill(vin, l)].forEach((v, i) => {
+    const td = document.createElement("td"); td.textContent = v; if (i > 0) td.className = "mono-cell"; tr.appendChild(td);
+  });
+  ttb.appendChild(tr);
+}
+$("tpljson").textContent = JSON.stringify(TEMPLATES.map(({ key, ...ev }) => ev), null, 2);
+const tb = $("fields").querySelector("tbody");
+for (const t of HEADER.tags.filter((t) => ["required", "recommended", "optional"].includes(t[0]))) {
+  const tr = document.createElement("tr");
+  const cells = [[t[1], "f"], [null, ""], [typeOf[t[1]] || "text", ""], [shown[t[1]] || "", ""], [t[2] || "", ""]];
+  cells.forEach(([v, cls], i) => {
+    const td = document.createElement("td"); if (cls) td.className = cls;
+    if (i === 1) { const s = document.createElement("span"); s.className = "lvl " + t[0]; s.textContent = t[0]; td.appendChild(s); } else td.textContent = v;
+    tr.appendChild(td);
+  });
+  tb.appendChild(tr);
+}
+
+const first = (item, k) => (item.tags.find((t) => t[0] === k) || [])[1];
+const vine = EXAMPLES.find((i) => first(i, "platform") === "vine") || EXAMPLES[0];
+$("m-title").textContent = first(vine, "title");
+$("m-sum").textContent = first(vine, "creator");
+for (const t of tags("display").filter((t) => t[1] === "fact")) {
+  const v = first(vine, t[2]); if (!v) continue;
+  const dt = document.createElement("dt"); dt.textContent = t[3] || t[2];
+  const dd = document.createElement("dd"); dd.textContent = v;
+  $("m-facts").append(dt, dd);
+}
+
+EXAMPLES.forEach((item, i) => {
+  const b = document.createElement("button");
+  b.className = "tab"; b.type = "button"; b.id = "tab-" + i; b.setAttribute("role", "tab");
+  b.textContent = first(item, "platform") === "vine" ? "Classic Vine" : "Native Divine video";
+  b.addEventListener("click", () => select(i));
+  $("tabs").appendChild(b);
+});
+function select(i) {
+  [...$("tabs").children].forEach((b, j) => b.setAttribute("aria-selected", String(i === j)));
+  $("example").textContent = JSON.stringify(EXAMPLES[i], null, 2);
+}
+select(0);
+
+const json = JSON.stringify(HEADER, null, 2);
+$("json").textContent = json;
+$("copy").addEventListener("click", () => {
+  const done = () => { $("copied").hidden = false; setTimeout(() => { $("copied").hidden = true; }, 2000); };
+  const fallback = () => { const r = document.createRange(); r.selectNodeContents($("json")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+  try { navigator.clipboard.writeText(json).then(done, fallback); } catch (_) { fallback(); }
+});
+</script>

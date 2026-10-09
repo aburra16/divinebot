@@ -1,0 +1,205 @@
+{
+  "kind": 39998,
+  "content": "",
+  "tags": [
+    [
+      "d",
+      "divine-videos"
+    ],
+    [
+      "names",
+      "Divine Video",
+      "Divine Videos"
+    ],
+    [
+      "description",
+      "Short looping videos posted on Divine (divine.video), including classic Vines restored from the Vine archive. Each item links to the video file on Divine's media server. The videos belong to their creators."
+    ],
+    [
+      "b",
+      "39998:b83a28b7e4e5d20bd960c5faeb6625f95529166b8bdb045d42634a2f35919450:divine-videos"
+    ],
+    [
+      "image",
+      "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/svg/1f3ac.svg"
+    ],
+    [
+      "required",
+      "title",
+      "Title as the creator posted it"
+    ],
+    [
+      "required",
+      "video",
+      "Playable MP4 of the video, e.g. https://media.divine.video/<sha256>.mp4"
+    ],
+    [
+      "recommended",
+      "thumbnail",
+      "Still image shown before the video plays"
+    ],
+    [
+      "recommended",
+      "creator",
+      "Creator's display name. For classic Vines, the name on the original Vine account"
+    ],
+    [
+      "recommended",
+      "creator-npub",
+      "Nostr account that posted the video, npub form. Divine creates it behind an email sign-in, so the creator may never have seen it. For classic Vines it is the archive account Divine holds until the original creator claims it"
+    ],
+    [
+      "recommended",
+      "creator-nip05",
+      "Creator's verified address, e.g. alice@divine.video. Included only when it resolves to creator-npub at the time of listing"
+    ],
+    [
+      "recommended",
+      "divine-id",
+      "The video's id on Divine, the d tag of its kind 34236 event: the file hash for native videos, the original Vine id for classic Vines"
+    ],
+    [
+      "recommended",
+      "sha256",
+      "SHA-256 hash of the video file, its address on Blossom media servers"
+    ],
+    [
+      "recommended",
+      "published",
+      "Date first posted, YYYY-MM-DD. For classic Vines, the original Vine upload date"
+    ],
+    [
+      "optional",
+      "description",
+      "Caption posted with the video"
+    ],
+    [
+      "optional",
+      "duration",
+      "Length in seconds"
+    ],
+    [
+      "optional",
+      "dimensions",
+      "Width x height in pixels, e.g. 1080x1920"
+    ],
+    [
+      "optional",
+      "platform",
+      "divine for videos posted on Divine, vine for classic Vines restored from the archive"
+    ],
+    [
+      "optional",
+      "vine-creator-id",
+      "Original Vine user id, classic Vines only"
+    ],
+    [
+      "optional",
+      "vine-loops",
+      "Loop count on Vine when the archive was taken, classic Vines only"
+    ],
+    [
+      "optional",
+      "vine-likes",
+      "Like count on Vine when the archive was taken, classic Vines only"
+    ],
+    [
+      "optional",
+      "language",
+      "Spoken or written language, ISO 639-1 code"
+    ],
+    [
+      "optional",
+      "verification",
+      "Divine's capture check result, e.g. verified_mobile or verified_web"
+    ],
+    [
+      "field-type",
+      "video",
+      "url"
+    ],
+    [
+      "field-type",
+      "thumbnail",
+      "url"
+    ],
+    [
+      "display",
+      "title",
+      "title"
+    ],
+    [
+      "display",
+      "summary",
+      "creator"
+    ],
+    [
+      "display",
+      "image",
+      "thumbnail"
+    ],
+    [
+      "display",
+      "media",
+      "video"
+    ],
+    [
+      "display",
+      "fact",
+      "creator-nip05",
+      "Handle"
+    ],
+    [
+      "display",
+      "fact",
+      "published",
+      "Posted"
+    ],
+    [
+      "display",
+      "fact",
+      "duration",
+      "Seconds"
+    ],
+    [
+      "display",
+      "fact",
+      "platform",
+      "Platform"
+    ],
+    [
+      "display",
+      "fact",
+      "vine-loops",
+      "Vine loops"
+    ],
+    [
+      "display",
+      "fact",
+      "vine-likes",
+      "Vine likes"
+    ],
+    [
+      "link",
+      "@template:divine-video",
+      "wss://dcosl.brainstorm.world",
+      "id",
+      "divine-id"
+    ],
+    [
+      "link",
+      "@template:divine-profile",
+      "wss://dcosl.brainstorm.world",
+      "npub",
+      "creator-npub"
+    ],
+    [
+      "r",
+      "https://divine.video"
+    ],
+    [
+      "r",
+      "https://github.com/jdecked/twemoji#license"
+    ]
+  ]
+}
