@@ -66,7 +66,8 @@ export async function checkUrl(
   return verdict(right ? "pass" : "fail");
 }
 
-function isHttps(value: string | undefined): value is string {
+/** True for a URL whose protocol is https; the media checks look at a thumbnail only then. */
+export function isHttps(value: string | undefined): value is string {
   if (!value) return false;
   try {
     return new URL(value).protocol === "https:";
