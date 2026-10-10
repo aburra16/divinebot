@@ -33,28 +33,51 @@ function windowStart(cfg: Config, cursor: number | undefined): number {
   return cursor === undefined ? cfg.source.harvestSince : cursor - cfg.source.overlapSeconds;
 }
 
+interface DeletionOutcome {
+  /** A stored video was newly marked deleted. */
+  applied: boolean;
+  /**
+   * The deletion passed the author rule: it names a 34236 coordinate under the deleter's own
+   * pubkey, or the stored event of a video the deleter authored. Only these move the cursor.
+   */
+  authored: boolean;
+}
+
 /**
- * Applies one kind 5 event and says whether it deleted a stored video. The video is found by the
- * `a` tags (`34236:<pubkey>:<d>`, the pubkey being the deleter's own). It is deleted when the
- * deletion also names the stored event by an `e` tag, or when it is no older than the stored
- * version (NIP-09: an `a` deletion covers versions up to its own `created_at`, so a deletion read
- * again in the overlap must not remove a later republish). State keeps one version per video, so
- * an `e` naming an earlier version does not match.
+ * Applies one kind 5 event. A stored video is deleted only when the deleter is its author and the
+ * deletion names it by an `e` equal to the stored event id, or by an `a` (`34236:<pubkey>:<d>`)
+ * and is no older than the stored version (NIP-09: an `a` deletion covers versions up to its own
+ * `created_at`, so one read again in the overlap must not remove a later republish). State keeps
+ * one version per video, so an `e` naming an earlier version does not match.
  */
-function applyDeletion(state: State, del: NostrEvent, at: number): boolean {
-  let applied = false;
+function applyDeletion(state: State, del: NostrEvent, at: number): DeletionOutcome {
+  const out: DeletionOutcome = { applied: false, authored: false };
+  const remove = (address: string) => {
+    state.setSourceStatus(address, "deleted", at);
+    out.applied = true;
+  };
   const prefix = `${VIDEO_KIND}:${del.pubkey}:`;
   for (const tag of del.tags) {
-    if (tag[0] !== "a" || !tag[1]?.startsWith(prefix)) continue;
-    const address = `${del.pubkey}:${tag[1].slice(prefix.length)}`;
-    const row = state.source(address);
-    if (!row || row.status === "deleted" || row.event.pubkey !== del.pubkey) continue;
-    const namesStoredEvent = del.tags.some((t) => t[0] === "e" && t[1] === row.eventId);
-    if (!namesStoredEvent && del.created_at < row.createdAt) continue;
-    state.setSourceStatus(address, "deleted", at);
-    applied = true;
+    if (tag[0] === "a" && tag[1]?.startsWith(prefix)) {
+      out.authored = true;
+      const address = `${del.pubkey}:${tag[1].slice(prefix.length)}`;
+      const row = state.source(address);
+      if (!row || row.status === "deleted" || row.event.pubkey !== del.pubkey) continue;
+      const namesStoredEvent = del.tags.some((t) => t[0] === "e" && t[1] === row.eventId);
+      if (namesStoredEvent || del.created_at >= row.createdAt) remove(address);
+    } else if (tag[0] === "e" && tag[1]) {
+      const row = state.sourceByEventId(tag[1]);
+      if (!row || row.event.pubkey !== del.pubkey) continue;
+      out.authored = true;
+      if (row.status !== "deleted") remove(row.address);
+    }
   }
-  return applied;
+  return out;
+}
+
+/** A window the relay could not page through: more than a page of events share one second. */
+function stalledMessage(url: string, stalledAt: number): string {
+  return `the relay at ${url} holds more events at second ${stalledAt} than fit in one page, so older events cannot be read`;
 }
 
 /**
@@ -91,12 +114,16 @@ export async function sync(cfg: Config, state: State, opts: SourceOptions = {}):
       for (const ev of events) newestVideo = Math.max(newestVideo ?? ev.created_at, ev.created_at);
     },
   );
+  if (read.stalledAt !== undefined) throw new Error(stalledMessage(cfg.source.relay, read.stalledAt));
   result.videos.rejected = read.rejected;
-  if (newestVideo !== undefined) state.setCursor("videos", Math.max(newestVideo, videosCursor ?? newestVideo));
+  // Clamped to now: a video dated in the future must not push the window past events not yet read.
+  if (newestVideo !== undefined) {
+    state.setCursor("videos", Math.max(Math.min(newestVideo, now()), videosCursor ?? 0));
+  }
 
   const deletionsCursor = state.cursor("deletions");
   let newestDeletion: number | undefined;
-  await stream(
+  const deletionRead = await stream(
     cfg.source.relay,
     { kinds: [DELETION_KIND], "#k": [String(VIDEO_KIND)], since: windowStart(cfg, deletionsCursor) },
     page,
@@ -104,15 +131,18 @@ export async function sync(cfg: Config, state: State, opts: SourceOptions = {}):
       const at = now();
       state.transaction(() => {
         for (const ev of events) {
-          if (applyDeletion(state, ev, at)) result.deletions.applied++;
+          const outcome = applyDeletion(state, ev, at);
+          if (outcome.applied) result.deletions.applied++;
           else result.deletions.ignored++;
+          // Only deletions by the video's own author may move the cursor: any key can sign a kind 5.
+          if (outcome.authored) newestDeletion = Math.max(newestDeletion ?? ev.created_at, ev.created_at);
         }
       });
-      for (const ev of events) newestDeletion = Math.max(newestDeletion ?? ev.created_at, ev.created_at);
     },
   );
+  if (deletionRead.stalledAt !== undefined) throw new Error(stalledMessage(cfg.source.relay, deletionRead.stalledAt));
   if (newestDeletion !== undefined) {
-    state.setCursor("deletions", Math.max(newestDeletion, deletionsCursor ?? newestDeletion));
+    state.setCursor("deletions", Math.max(Math.min(newestDeletion, now()), deletionsCursor ?? 0));
   }
   return result;
 }

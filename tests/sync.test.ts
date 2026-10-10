@@ -37,7 +37,10 @@ interface Call {
  * A stand-in for `streamEvents` over an in-memory relay. It honours `kinds`, `since` and `#k`,
  * hands events over in pages of `perPage`, and can fail after `failAfterPages` pages.
  */
-function fakeRelay(events: NostrEvent[], { perPage = 20, failAfterPages }: { perPage?: number; failAfterPages?: number } = {}) {
+function fakeRelay(
+  events: NostrEvent[],
+  { perPage = 20, failAfterPages, stalledAt }: { perPage?: number; failAfterPages?: number; stalledAt?: number } = {},
+) {
   const calls: Call[] = [];
   const stream: typeof streamEvents = async (url, filter, opts, onPage) => {
     calls.push({ url, filter, opts });
@@ -58,6 +61,7 @@ function fakeRelay(events: NostrEvent[], { perPage = 20, failAfterPages }: { per
       result.pages++;
       result.events += page.length;
     }
+    if (stalledAt !== undefined) result.stalledAt = stalledAt;
     return result;
   };
   return { stream, calls, events };
@@ -104,7 +108,9 @@ const opts = (relay: ReturnType<typeof fakeRelay>) => ({ now: () => NOW, stream:
 
 describe("sync", () => {
   it("stores 50 native rows (46 eligible) and every Vine as classic-vine, flags the first harvest and sets both cursors", async () => {
-    const relay = fakeRelay([...all, deletionOf(native[0]!, { author: "f".repeat(64) })]);
+    const own = deletionOf(native[0]!, { created_at: newest(all) + 5 });
+    const foreign = deletionOf(native[1]!, { author: "f".repeat(64), created_at: newest(all) + 50 });
+    const relay = fakeRelay([...all, own, foreign]);
     const result = await sync(cfgAll, state, opts(relay));
 
     expect(result.firstHarvest).toBe(true);
@@ -117,7 +123,8 @@ describe("sync", () => {
     expect(state.sources({ class: "vine", eligibleOnly: true })).toHaveLength(0);
 
     expect(state.cursor("videos")).toBe(newest(all));
-    expect(state.cursor("deletions")).toBe(newest(relay.events.filter((e) => e.kind === 5)));
+    // Only the author's own deletion counts toward the cursor, not the later one from another key.
+    expect(state.cursor("deletions")).toBe(own.created_at);
   });
 
   it("asks for kind 34236 since harvestSince on a first harvest, using the configured page options and relay", async () => {
@@ -229,6 +236,24 @@ describe("sync", () => {
       const victim = native[3]!;
       const stale = deletionOf(victim, { tags: [["e", "0".repeat(64)], ["k", "34236"]] });
       const result = await sync(cfg, state, opts(fakeRelay([...all, stale])));
+      expect(result.deletions).toEqual({ applied: 0, ignored: 1 });
+      expect(state.source(addrOf(victim))!.status).toBe("active");
+    });
+
+    it("an e-only deletion of the stored event id by the author is applied", async () => {
+      const victim = native[3]!;
+      const eOnly = deletionOf(victim, { tags: [["e", victim.id], ["k", "34236"]] });
+      const result = await sync(cfg, state, opts(fakeRelay([...native, eOnly])));
+
+      expect(result.deletions).toEqual({ applied: 1, ignored: 0 });
+      expect(state.source(addrOf(victim))!.status).toBe("deleted");
+    });
+
+    it("an e-only deletion of the stored event id by another key is ignored", async () => {
+      const victim = native[3]!;
+      const foreign = deletionOf(victim, { author: "d".repeat(64), tags: [["e", victim.id], ["k", "34236"]] });
+      const result = await sync(cfg, state, opts(fakeRelay([...native, foreign])));
+
       expect(result.deletions).toEqual({ applied: 0, ignored: 1 });
       expect(state.source(addrOf(victim))!.status).toBe("active");
     });
@@ -349,6 +374,51 @@ describe("sync", () => {
     });
   });
 
+  describe("a window the relay could not page through", () => {
+    it("a stalled videos read throws and sets no cursor", async () => {
+      const relay = fakeRelay(native, { stalledAt: 1_791_560_000 });
+      await expect(sync(cfg, state, opts(relay))).rejects.toThrow(/more events at second 1791560000 than fit in one page/);
+      expect(state.cursor("videos")).toBeUndefined();
+      expect(state.cursor("deletions")).toBeUndefined();
+      expect(relay.calls).toHaveLength(1);
+    });
+
+    it("a stalled deletions read throws and sets no deletions cursor", async () => {
+      const victim = native[0]!;
+      const del = deletionOf(victim);
+      const stream: typeof streamEvents = async (url, filter, o, onPage) => {
+        const r = await fakeRelay([...native, del]).stream(url, filter, o, onPage);
+        return filter.kinds?.[0] === 5 ? { ...r, stalledAt: del.created_at } : r;
+      };
+      await expect(sync(cfg, state, { now: () => NOW, stream })).rejects.toThrow(/than fit in one page/);
+      expect(state.cursor("deletions")).toBeUndefined();
+    });
+  });
+
+  describe("future-dated events", () => {
+    it("a video dated in the future does not push the videos cursor beyond now", async () => {
+      const future: NostrEvent = { ...native[0]!, id: "c".repeat(64), tags: [["d", "from-2099"], ...native[0]!.tags.filter((t) => t[0] !== "d")], created_at: 4_000_000_000 };
+      await sync(cfg, state, opts(fakeRelay([...native, future])));
+      expect(state.cursor("videos")).toBe(NOW);
+      expect(state.source(addrOf(future))).toBeDefined();
+    });
+
+    it("an ignored future-dated kind 5 from another key does not move the deletions cursor", async () => {
+      const victim = native[3]!;
+      const own = deletionOf(victim);
+      const hostile = deletionOf(victim, { author: "f".repeat(64), created_at: 4_000_000_000 });
+      await sync(cfg, state, opts(fakeRelay([...native, own, hostile])));
+      expect(state.cursor("deletions")).toBe(own.created_at);
+    });
+
+    it("an author's own future-dated kind 5 is clamped to now", async () => {
+      const victim = native[3]!;
+      const own = deletionOf(victim, { created_at: 4_000_000_000 });
+      await sync(cfg, state, opts(fakeRelay([...native, own])));
+      expect(state.cursor("deletions")).toBe(NOW);
+    });
+  });
+
   describe("edits", () => {
     it("a newer edit of a video replaces the stored event", async () => {
       const video = native[2]!;
@@ -461,6 +531,14 @@ describe("sweep", () => {
 
     expect(state.sources({ status: "vanished" })).toHaveLength(0);
     expect(state.sources({ status: "active" })).toHaveLength(100);
+    expect(state.cursor("last_sweep")).toBeUndefined();
+  });
+
+  it("a stalled sweep throws, marks nothing vanished and sets no last_sweep", async () => {
+    const relay = fakeRelay(native.slice(0, 40), { stalledAt: 1_791_560_000 });
+    await expect(sweep(cfgAll, state, opts(relay))).rejects.toThrow(/than fit in one page/);
+
+    expect(state.sources({ status: "vanished" })).toHaveLength(0);
     expect(state.cursor("last_sweep")).toBeUndefined();
   });
 

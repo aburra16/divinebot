@@ -68,6 +68,8 @@ export interface State {
   upsertSource(ev: NostrEvent, cls: SourceClass, skipReason: string | null, seenAt: number): "new" | "updated" | "same" | "older";
   setSourceStatus(address: string, status: SourceStatus, at: number): void;
   source(address: string): SourceRow | undefined;
+  /** The source whose stored (newest) version has this event id. Indexed. */
+  sourceByEventId(eventId: string): SourceRow | undefined;
   /** Sources ordered by address. `eligibleOnly` keeps rows with no skip reason. Loads every match into memory. */
   sources(filter?: { status?: SourceStatus; class?: SourceClass; eligibleOnly?: boolean }): SourceRow[];
   /** Marks sources as seen without rewriting them; a vanished one seen again becomes active. */
@@ -129,6 +131,7 @@ CREATE TABLE IF NOT EXISTS sources (
   first_seen INTEGER NOT NULL,
   last_seen INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS sources_event_id ON sources (event_id);
 CREATE TABLE IF NOT EXISTS profiles (
   pubkey TEXT PRIMARY KEY,
   json TEXT NOT NULL,
@@ -258,6 +261,7 @@ export function openState(path: string): State {
   );
   const updateSourceStatus = db.prepare("UPDATE sources SET status = ? WHERE address = ?");
   const selectSource = db.prepare(`SELECT ${SOURCE_COLUMNS} FROM sources WHERE address = ?`);
+  const selectSourceByEventId = db.prepare(`SELECT ${SOURCE_COLUMNS} FROM sources WHERE event_id = ?`);
   const touchSource = db.prepare(
     `UPDATE sources SET last_seen = ?, status = CASE WHEN status = 'vanished' THEN 'active' ELSE status END
      WHERE address = ?`,
@@ -362,6 +366,10 @@ export function openState(path: string): State {
     },
     source(address) {
       const row = selectSource.get(address) as SourceDbRow | undefined;
+      return row ? toSourceRow(row) : undefined;
+    },
+    sourceByEventId(eventId) {
+      const row = selectSourceByEventId.get(eventId) as SourceDbRow | undefined;
       return row ? toSourceRow(row) : undefined;
     },
     sources(filter = {}) {

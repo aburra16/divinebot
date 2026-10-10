@@ -439,6 +439,18 @@ describe("sources", () => {
     state.touchSources([], 99);
   });
 
+  it("sourceByEventId finds the source whose stored version has that id, and none for a replaced version", () => {
+    const v1 = source({ d: "v1" });
+    state.upsertSource(v1, "native", null, 1);
+    expect(state.sourceByEventId(v1.id)?.address).toBe(`${PK}:v1`);
+    expect(state.sourceByEventId("nope")).toBeUndefined();
+
+    const v2 = { ...v1, id: "b".repeat(64), created_at: v1.created_at + 5 };
+    state.upsertSource(v2, "native", null, 2);
+    expect(state.sourceByEventId(v2.id)?.eventId).toBe(v2.id);
+    expect(state.sourceByEventId(v1.id)).toBeUndefined();
+  });
+
   it("sourceAddresses lists addresses only, filtered and sorted", () => {
     state.upsertSource(source({ d: "v2" }), "native", null, 1);
     state.upsertSource(source({ d: "v1" }), "native", null, 1);

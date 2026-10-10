@@ -22,12 +22,17 @@ export async function sweep(cfg: Config, state: State, opts: SourceOptions = {})
   const seen = new Set<string>();
   const startedAt = now();
 
-  await stream(cfg.source.relay, { kinds: [VIDEO_KIND], since: cfg.source.harvestSince }, pageOptions(cfg), (events) => {
+  const read = await stream(cfg.source.relay, { kinds: [VIDEO_KIND], since: cfg.source.harvestSince }, pageOptions(cfg), (events) => {
     const addresses = events.map((ev) => `${ev.pubkey}:${ev.tags.find((t) => t[0] === "d")?.[1] ?? ""}`);
     state.touchSources(addresses, startedAt);
     for (const address of addresses) seen.add(address);
   });
 
+  if (read.stalledAt !== undefined) {
+    throw new Error(
+      `the relay at ${cfg.source.relay} holds more events at second ${read.stalledAt} than fit in one page, so older videos cannot be checked`,
+    );
+  }
   const vanished = state
     .sourceAddresses({ status: "active", class: "native" })
     .filter((address) => !seen.has(address));
