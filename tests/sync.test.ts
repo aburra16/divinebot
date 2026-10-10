@@ -4,7 +4,7 @@ import type { NostrEvent } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import { loadConfig, type Config } from "../src/config.js";
 import { streamEvents, type PageOptions, type StreamResult } from "../src/source/divine-relay.js";
-import { sweep } from "../src/source/sweep.js";
+import { confirmFilters, sweep } from "../src/source/sweep.js";
 import { sync } from "../src/source/sync.js";
 import { openState, type State } from "../src/state.js";
 
@@ -34,12 +34,19 @@ interface Call {
 }
 
 /**
- * A stand-in for `streamEvents` over an in-memory relay. It honours `kinds`, `since` and `#k`,
- * hands events over in pages of `perPage`, and can fail after `failAfterPages` pages.
+ * A stand-in for `streamEvents` over an in-memory relay. It honours `kinds`, `since`, `authors`,
+ * `#d` and `#k`, hands events over in pages of `perPage`, and can fail after `failAfterPages`
+ * pages. Events in `hiddenFromWindow` are left out of any read that names no authors, as a relay
+ * whose full read came back incomplete.
  */
 function fakeRelay(
   events: NostrEvent[],
-  { perPage = 20, failAfterPages, stalledAt }: { perPage?: number; failAfterPages?: number; stalledAt?: number } = {},
+  {
+    perPage = 20,
+    failAfterPages,
+    stalledAt,
+    hiddenFromWindow = [],
+  }: { perPage?: number; failAfterPages?: number; stalledAt?: number; hiddenFromWindow?: NostrEvent[] } = {},
 ) {
   const calls: Call[] = [];
   const stream: typeof streamEvents = async (url, filter, opts, onPage) => {
@@ -49,6 +56,10 @@ function fakeRelay(
       if (filter.since !== undefined && ev.created_at < filter.since) return false;
       const k = filter["#k"];
       if (k && !ev.tags.some((t) => t[0] === "k" && k.includes(t[1] ?? ""))) return false;
+      if (filter.authors && !filter.authors.includes(ev.pubkey)) return false;
+      const d = filter["#d"];
+      if (d && !ev.tags.some((t) => t[0] === "d" && d.includes(t[1] ?? ""))) return false;
+      if (!filter.authors && hiddenFromWindow.includes(ev)) return false;
       return true;
     });
     const result: StreamResult = { pages: 0, events: 0, rejected: 0 };
@@ -104,7 +115,12 @@ afterEach(() => {
 });
 
 const all = [...native, ...vine];
-const opts = (relay: ReturnType<typeof fakeRelay>) => ({ now: () => NOW, stream: relay.stream });
+const sleeps: number[] = [];
+const opts = (relay: ReturnType<typeof fakeRelay>) => ({
+  now: () => NOW,
+  stream: relay.stream,
+  sleep: async (ms: number) => void sleeps.push(ms),
+});
 
 describe("sync", () => {
   it("stores 50 native rows (46 eligible) and every Vine as classic-vine, flags the first harvest and sets both cursors", async () => {
@@ -475,15 +491,20 @@ describe("sweep", () => {
 
   it("marks nothing vanished when every video is present, and sets last_sweep", async () => {
     const result = await sweep(cfgAll, state, opts(fakeRelay(all)));
-    expect(result).toEqual({ seen: 100, vanished: [] });
+    expect(result).toEqual({ seen: 100, vanished: [], upserted: 0 });
     expect(state.sources({ status: "vanished" })).toHaveLength(0);
     expect(state.cursor("last_sweep")).toBe(NOW);
   });
 
-  it("with 49 of 50 native videos present marks exactly the missing one vanished", async () => {
+  it("with 49 of 50 native videos present marks exactly the missing one vanished, after asking for it by name", async () => {
     const missing = native[7]!;
-    const result = await sweep(cfgAll, state, opts(fakeRelay(all.filter((e) => e !== missing), { perPage: 9 })));
+    const relay = fakeRelay(all.filter((e) => e !== missing), { perPage: 9 });
+    sleeps.length = 0;
+    const result = await sweep(cfgAll, state, opts(relay));
 
+    expect(relay.calls).toHaveLength(2);
+    expect(relay.calls[1]!.filter).toEqual({ kinds: [34236], authors: [missing.pubkey], "#d": [dOf(missing)] });
+    expect(sleeps).toEqual([cfg.source.pageDelayMs]);
     expect(result.seen).toBe(99);
     expect(result.vanished).toEqual([addrOf(missing)]);
     expect(state.sources({ status: "vanished" }).map((r) => r.address)).toEqual([addrOf(missing)]);
@@ -542,9 +563,68 @@ describe("sweep", () => {
     expect(state.cursor("last_sweep")).toBeUndefined();
   });
 
-  it("a sweep that sees nothing at all marks every active native video vanished only when it resolved", async () => {
-    const result = await sweep(cfg, state, opts(fakeRelay([])));
-    expect(result.seen).toBe(0);
-    expect(result.vanished).toHaveLength(50);
+  it("a sweep that sees no video at all throws, marks nothing vanished and sets no last_sweep", async () => {
+    await expect(sweep(cfg, state, opts(fakeRelay([])))).rejects.toThrow(
+      /read no videos .* while state holds 50 active native videos.*nothing was marked vanished; run npm run sweep again later/,
+    );
+    expect(state.sources({ status: "vanished" })).toHaveLength(0);
+    expect(state.cursor("last_sweep")).toBeUndefined();
+  });
+
+  it("a sweep that would mark more than maxVanishedFraction vanished throws and marks nothing", async () => {
+    // 3 of 50 is 6%, over the 5% default.
+    const gone = new Set(native.slice(0, 3));
+    const relay = fakeRelay(all.filter((e) => !gone.has(e)));
+    await expect(sweep(cfgAll, state, opts(relay))).rejects.toThrow(
+      /would mark 3 of 50 active native videos vanished, more than the 5% limit .*run npm run sweep again later/,
+    );
+    expect(relay.calls).toHaveLength(1);
+    expect(state.sources({ status: "vanished" })).toHaveLength(0);
+    expect(state.cursor("last_sweep")).toBeUndefined();
+
+    // At the limit it marks them.
+    const two = new Set(native.slice(0, 2));
+    const ok = await sweep(cfgAll, state, opts(fakeRelay(all.filter((e) => !two.has(e)))));
+    expect(ok.vanished).toHaveLength(2);
+  });
+
+  it("does not mark an address the full read missed but the check by name finds", async () => {
+    const [hidden, gone] = [native[3]!, native[8]!];
+    const relay = fakeRelay(all.filter((e) => e !== gone), { hiddenFromWindow: [hidden] });
+    const result = await sweep(cfgAll, state, opts(relay));
+
+    expect(result.vanished).toEqual([addrOf(gone)]);
+    expect(state.source(addrOf(hidden))!.status).toBe("active");
+    expect(state.source(addrOf(gone))!.status).toBe("vanished");
+    const named = relay.calls[1]!.filter;
+    expect(new Set(named.authors)).toEqual(new Set([hidden.pubkey, gone.pubkey]));
+    expect(new Set(named["#d"])).toEqual(new Set([dOf(hidden), dOf(gone)]));
+  });
+
+  it("asks for missing addresses in filters of at most 500 authors and 500 d values", () => {
+    const addresses = Array.from({ length: 1201 }, (_, i) => `${(i % 700).toString(16).padStart(64, "0")}:vid-${i}`).sort();
+    const filters = confirmFilters(addresses);
+    expect(filters).toHaveLength(3);
+    const covered = new Set<string>();
+    for (const f of filters) {
+      expect(f.kinds).toEqual([34236]);
+      expect(f.authors!.length).toBeLessThanOrEqual(500);
+      expect(f["#d"]!.length).toBeLessThanOrEqual(500);
+      for (const a of f.authors!) for (const d of f["#d"]!) covered.add(`${a}:${d}`);
+    }
+    for (const address of addresses) expect(covered.has(address)).toBe(true);
+  });
+
+  it("stores an event it reads that state does not hold, or holds an older version of", async () => {
+    const unknown: NostrEvent = { ...native[0]!, id: "u".padEnd(64, "1"), pubkey: "9".repeat(64) };
+    const video = native[5]!;
+    const edited = edit(video, video.created_at + 30, "Edited after sync");
+    const relay = fakeRelay([...all.filter((e) => e !== video), edited, unknown]);
+    const result = await sweep(cfgAll, state, opts(relay));
+
+    expect(result.upserted).toBe(2);
+    expect(state.source(addrOf(unknown))).toMatchObject({ status: "active", class: "native", skipReason: null });
+    expect(state.source(addrOf(video))!.event.tags.find((t) => t[0] === "title")![1]).toBe("Edited after sync");
+    expect(state.source(addrOf(unknown))!.event.tags.some((t) => t[0] === "proofmode")).toBe(false);
   });
 });

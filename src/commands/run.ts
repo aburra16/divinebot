@@ -101,7 +101,7 @@ async function autoPassphrase(): Promise<string> {
  * One run, start to finish, holding `<paths.state>.lock` throughout so two runs never overlap.
  *
  * Both modes read the source (`sync`, then `sweep` when the last one is a week old, never on a
- * first harvest), refresh profiles, check media and `build`. A manual run stops there and prints
+ * first harvest; a sweep that throws is a warning and the run goes on with nothing vanished), refresh profiles, check media and `build`. A manual run stops there and prints
  * the run dir and the commands that come next. An unattended run (`auto`) refuses `pilot` and
  * `firstRun`, which want a human; it stops for review, writing `NEEDS_REVIEW` into the run and
  * returning exit code 2, when the build breached a guard. When an earlier run is not fully
@@ -144,9 +144,14 @@ export async function runPipeline(
     let vanished = 0;
     const lastSweep = state.cursor("last_sweep");
     if (!firstHarvest && (lastSweep === undefined || d.now() - lastSweep > SWEEP_EVERY_SECONDS)) {
-      const swept = await d.sweep(cfg, state);
-      vanished = swept.vanished.length;
-      d.log(`sweep: saw ${swept.seen} videos, ${plural(vanished, "video")} vanished`);
+      // A failed sweep must not hold up the day's new videos: it marked nothing, and the next run tries again.
+      try {
+        const swept = await d.sweep(cfg, state);
+        vanished = swept.vanished.length;
+        d.log(`sweep: saw ${swept.seen} videos, ${plural(vanished, "video")} vanished, ${swept.upserted} stored`);
+      } catch (err) {
+        d.warn(`warning: the sweep failed, so this run marks nothing vanished: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     const profiles = await d.refreshProfiles(cfg, state);

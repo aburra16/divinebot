@@ -19,6 +19,8 @@ export interface SourceOptions {
   /** Unix seconds. */
   now?: () => number;
   stream?: typeof streamEvents;
+  /** The pause between two reads on separate connections (the sweep's checks by name). Tests inject it. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export const unixNow = (): number => Math.floor(Date.now() / 1000);

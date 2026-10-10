@@ -51,6 +51,7 @@ interface Fakes {
   breaches?: BuildResult["breaches"];
   created?: number;
   vanished?: string[];
+  sweepError?: Error;
   built?: unknown[];
   signCalls?: unknown[];
   publishCalls?: unknown[];
@@ -69,7 +70,8 @@ function deps(f: Fakes = {}): Partial<PipelineDeps> {
     },
     sweep: async () => {
       calls.push("sweep");
-      return { seen: 10, vanished: f.vanished ?? [] };
+      if (f.sweepError) throw f.sweepError;
+      return { seen: 10, vanished: f.vanished ?? [], upserted: 0 };
     },
     refreshProfiles: async () => {
       calls.push("profiles");
@@ -175,6 +177,19 @@ describe("runPipeline, sweep cadence", () => {
     state.setCursor("last_sweep", NOW - 7 * DAY + 60);
     await runPipeline(cfg, state, { auto: false, deps: deps() });
     expect(calls).not.toContain("sweep");
+  });
+
+  it("carries on with vanished 0 and a warning when the sweep throws, and an auto run still publishes", async () => {
+    state.setCursor("videos", NOW - 100);
+    const built: unknown[] = [];
+    const sweepError = new Error("the sweep read no videos; nothing was marked vanished; run npm run sweep again later");
+    const out = await runPipeline(cfg, state, { auto: true, deps: deps({ built, sweepError }) });
+    expect(calls).toEqual(["sync", "sweep", "profiles", "media", "build", "sign", "publish", "verify"]);
+    expect(built[0]).toMatchObject({ vanished: 0 });
+    expect(out.exitCode).toBe(0);
+    expect(warnings).toContain(
+      "warning: the sweep failed, so this run marks nothing vanished: the sweep read no videos; nothing was marked vanished; run npm run sweep again later",
+    );
   });
 
   it("never sweeps on a first harvest", async () => {

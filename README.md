@@ -64,7 +64,7 @@ Run them from the repo root. Each stage writes files the next one reads, so any 
 | Command | Does | Network | Key |
 |---|---|---|---|
 | `npm run sync` | Incremental read of the source relay; the first run harvests every native video | source relay | no |
-| `npm run sweep` | Full read that marks vanished videos | source relay | no |
+| `npm run sweep` | Full read that stores any video sync missed and marks vanished videos, after asking for each missing one by name | source relay | no |
 | `npm run media` | Pending media checks plus the rolling rechecks | media host | no |
 | `npm run profiles` | Creator profile and NIP-05 refresh | source relay, `.well-known` | no |
 | `npm run build -- [--pilot N] [--first-run]` | Checks the header, then writes `unsigned.jsonl`, `manifest.json` and `report.md` into `out/<run>/` | dcosl (header) | no |
@@ -170,6 +170,13 @@ An automatic run that finds an unfinished earlier run still syncs, sweeps, refre
   ```
 
   It prints each event it settles (kind, event id, `d`, relay and the relay's message) and never sends anything. A settled event is not sent again, and `status` stops listing the run. An event still pending from a crash is not settled; publish the run again first.
+- **A sweep failed or looked wrong.** A sweep refuses to mark anything when it read no videos at all while state holds some, or when more than `guards.maxVanishedFraction` (5%) of the active native videos would vanish; both point at an incomplete read from Divine rather than at creators. Before it marks a video vanished, it also asks the relay for that video by name. A refused sweep leaves state and the sweep date as they were, and inside `run` it is only a warning: the day's new videos are still built and published. Run it again later by hand, and check `npm run status` afterwards:
+
+  ```bash
+  npm run sweep
+  ```
+
+  Until a sweep succeeds, every daily run tries the full read again.
 - **State and relays disagree.** Run `npm run verify` and read its missing and extra lists before building again.
 - **A bad run was published.** Every event id ever published is recorded in `state/state.sqlite`, so a deletion can name every version of an item. The tool removes items when their videos stop being eligible: a build emits kind 5 deletions for them, within the deletion guard. There is no command that deletes a whole run at once. If a run must be undone, stop and decide with Avi before changing scope or state, because a mass deletion is public and cannot be taken back.
 - **Back up `state/state.sqlite`.** It is the only record of what was published. After each publish:

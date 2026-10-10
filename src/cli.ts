@@ -78,7 +78,7 @@ const commands = new Map<string, Command>([
       only("sweep", args);
       const cfg = loadConfig();
       const r = await withStateLocked(cfg, (state) => sweep(cfg, state));
-      console.log(`saw ${r.seen} videos, ${r.vanished.length} newly vanished`);
+      console.log(`saw ${r.seen} videos, ${r.vanished.length} newly vanished, ${r.upserted} stored`);
     },
   ],
   [
