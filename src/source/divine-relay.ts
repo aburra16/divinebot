@@ -1,0 +1,221 @@
+import type { NostrEvent } from "nostr-tools/core";
+import type { Filter } from "nostr-tools/filter";
+import { verifyEvent } from "nostr-tools/pure";
+import WebSocket from "ws";
+
+/*
+ * Paging client for the Divine source relay (Funnelcake). nostr-tools' relay class is not
+ * used: `nak req` and library clients hang on this relay while a plain WebSocket works, so
+ * this speaks NIP-01 directly. One connection, one REQ per page, each closed at EOSE.
+ *
+ * Memory: a native event averages 22 KB and a first harvest is about 1.1 GB. Only the page in
+ * flight is held. It is handed to `onPage` and dropped; across pages only event ids are kept.
+ */
+
+export interface PageOptions {
+  /** `limit` of each REQ; keep it at or under the relay's own cap so a capped page looks full. */
+  pageSize: number;
+  /** Pause between one page and the next request. */
+  pageDelayMs: number;
+  /** Longest the relay may stay silent (connecting, or between messages of a page). */
+  readTimeoutMs: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export interface StreamResult {
+  /** REQs answered, counting the last one, which only repeated events already seen. */
+  pages: number;
+  /** Events handed to `onPage`. */
+  events: number;
+  /** Events dropped because their signature or shape did not verify. */
+  rejected: number;
+  /** The created_at that paging could not step past, when a full page brought nothing new. */
+  stalledAt?: number;
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Opens a socket, or rejects with a message naming the relay. */
+function connect(url: string, timeoutMs: number): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(url, { handshakeTimeout: timeoutMs });
+    } catch (err) {
+      reject(new Error(`cannot connect to ${url} (${reason(err)})`));
+      return;
+    }
+    const fail = (err: unknown) => {
+      ws.removeAllListeners("open");
+      // A socket that fails later must not raise an unhandled 'error'; reads listen for it.
+      ws.on("error", () => {});
+      reject(new Error(`cannot connect to ${url} (${reason(err)})`));
+    };
+    ws.once("open", () => {
+      ws.removeListener("error", fail);
+      ws.removeListener("close", onClose);
+      ws.on("error", () => {});
+      resolve(ws);
+    });
+    const onClose = () => fail(new Error("closed before it opened"));
+    ws.once("error", fail);
+    ws.once("close", onClose);
+  });
+}
+
+const reason = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** What one REQ brought that earlier pages had not. */
+interface PageRead {
+  /** New events whose signature verified. */
+  events: NostrEvent[];
+  /** New events that failed verification or were not shaped like events. */
+  rejected: number;
+  /** How many events the relay sent in all, repeats included. */
+  received: number;
+  /** The oldest `created_at` among the new events, forged ones included; undefined if none. */
+  oldest?: number;
+}
+
+/**
+ * One REQ up to EOSE. Events are signature-checked as they arrive; `seen` (ids from every
+ * page so far, forged ones too) is extended here so a repeat is neither delivered nor counted
+ * twice. A forged event still moves `oldest`: an honest relay may hold a corrupt event, and
+ * leaving it out would make paging repeat the same page and stop short.
+ */
+function readPage(
+  ws: WebSocket,
+  url: string,
+  subId: string,
+  filter: Filter,
+  timeoutMs: number,
+  seen: Set<string>,
+): Promise<PageRead> {
+  return new Promise((resolve, reject) => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      reject(new Error(`${url} dropped the connection before the next page was requested`));
+      return;
+    }
+    const page: PageRead = { events: [], rejected: 0, received: 0 };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = (err?: Error) => {
+      clearTimeout(timer);
+      ws.removeListener("message", onMessage);
+      ws.removeListener("close", onClose);
+      ws.removeListener("error", onError);
+      if (err === undefined) {
+        try {
+          ws.send(JSON.stringify(["CLOSE", subId]));
+        } catch {
+          // The page is complete; a failed CLOSE surfaces on the next read.
+        }
+        resolve(page);
+      } else {
+        reject(err);
+      }
+    };
+    // Silence, not total time: a page of 5000 native events is over 100 MB and may take a while.
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(
+        () => done(new Error(`${url} did not finish the read within ${timeoutMs / 1000} s`)),
+        timeoutMs,
+      );
+    };
+    const onEvent = (ev: unknown) => {
+      page.received++;
+      const id = isObject(ev) && typeof ev.id === "string" ? ev.id : undefined;
+      if (id !== undefined) {
+        if (seen.has(id)) return;
+        seen.add(id);
+      }
+      const created = isObject(ev) ? ev.created_at : undefined;
+      if (typeof created === "number" && Number.isFinite(created)) {
+        page.oldest = page.oldest === undefined ? created : Math.min(page.oldest, created);
+      }
+      let ok = false;
+      try {
+        ok = verifyEvent(ev as NostrEvent);
+      } catch {
+        ok = false;
+      }
+      if (ok) page.events.push(ev as NostrEvent);
+      else page.rejected++;
+    };
+    const onMessage = (data: WebSocket.RawData) => {
+      arm();
+      let msg: unknown;
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+      if (!Array.isArray(msg) || msg[1] !== subId) return;
+      if (msg[0] === "EVENT") onEvent(msg[2]);
+      else if (msg[0] === "EOSE") done();
+      else if (msg[0] === "CLOSED") {
+        done(new Error(`${url} closed the read before it finished: ${String(msg[2] ?? "")}`));
+      }
+    };
+    const onClose = () => done(new Error(`${url} dropped the connection during the read`));
+    const onError = (err: Error) => done(new Error(`${url} connection error: ${err.message}`));
+    ws.on("message", onMessage);
+    ws.once("close", onClose);
+    ws.once("error", onError);
+    arm();
+    ws.send(JSON.stringify(["REQ", subId, filter]), (err) => {
+      if (err) done(new Error(`${url} connection error: ${err.message}`));
+    });
+  });
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+
+/**
+ * Reads every event matching `filter` from the relay at `url`, page by page. Each page asks
+ * for events up to the oldest `created_at` seen so far, ties included, so ids are deduplicated
+ * and reading stops at the first page that brings nothing new. A full page that brings nothing
+ * new means more than a page of events share one `created_at`; the result then carries
+ * `stalledAt`. Paging by `until` cannot step past that second.
+ *
+ * Each page's new, verified events go to `onPage`, which is awaited before the next request.
+ * Rejects, naming the relay, on CLOSED, a dropped socket or a silent relay; never resolves
+ * with a partial read. The socket is closed either way.
+ */
+export async function streamEvents(
+  url: string,
+  filter: Filter,
+  opts: PageOptions,
+  onPage: (events: NostrEvent[]) => void | Promise<void>,
+): Promise<StreamResult> {
+  const { pageSize, pageDelayMs, readTimeoutMs } = opts;
+  if (!Number.isInteger(pageSize) || pageSize < 1) {
+    throw new Error(`pageSize must be a positive integer, got ${pageSize}`);
+  }
+  const sleep = opts.sleep ?? defaultSleep;
+  const ws = await connect(url, readTimeoutMs);
+  try {
+    const seen = new Set<string>();
+    const result: StreamResult = { pages: 0, events: 0, rejected: 0 };
+    let until = filter.until;
+    for (;;) {
+      if (result.pages > 0) await sleep(pageDelayMs);
+      const subId = `divine-${result.pages + 1}`;
+      const request: Filter = { ...filter, ...(until === undefined ? {} : { until }), limit: pageSize };
+      const page = await readPage(ws, url, subId, request, readTimeoutMs, seen);
+      result.pages++;
+      result.rejected += page.rejected;
+      const fresh = page.events.length + page.rejected;
+      if (fresh === 0) {
+        if (page.received >= pageSize && until !== undefined) result.stalledAt = until;
+        return result;
+      }
+      if (page.oldest !== undefined) until = until === undefined ? page.oldest : Math.min(until, page.oldest);
+      result.events += page.events.length;
+      if (page.events.length > 0) await onPage(page.events);
+    }
+  } finally {
+    ws.removeAllListeners("message");
+    ws.close();
+  }
+}
