@@ -38,7 +38,7 @@ Avi writes the curator key himself, as an `nsec` or a NIP-49 `ncryptsec`. It nev
 
 ```bash
 mkdir -p ~/.config/divine-videos && chmod 700 ~/.config/divine-videos
-pbpaste > ~/.config/divine-videos/curator.key && chmod 600 ~/.config/divine-videos/curator.key
+(umask 077; pbpaste > ~/.config/divine-videos/curator.key) && chmod 600 ~/.config/divine-videos/curator.key
 pbcopy < /dev/null
 ```
 
@@ -81,7 +81,8 @@ Notes:
 - The weekly sweep happens inside `run`: it runs a sweep when the last one is more than seven days old, and never on the first harvest. No separate schedule is needed.
 - A pilot build never emits deletions. `--pilot N` picks N eligible videos, spread across creators (at most two per creator) and across months. `--pilot` alone uses `pilotSize` from the config.
 - `build` refuses a state with no items unless given `--first-run`. Use it for the very first import only (the pilot).
-- A build skips videos with a content warning, videos whose event carries `expiration`, and videos whose media fails a check. The report counts every skip by reason.
+- A build skips, and the report counts by reason: `content-warning` (the video carries a content warning), `expiration` (the event carries an `expiration` tag), `no-title` (no usable title, which the header requires), `media-failed` (a stored media check failed) and `media-pending` (a new video whose media checks have not passed yet).
+- The rehearsal measured about 9% `no-title` among real native videos (73 of 810). That is roughly 4,600 videos at full scale, and whether to list them under a fallback title is a product decision for Avi before the first import.
 - An item is republished only when its content changes, so reactions to unchanged items stay attached.
 
 ## Runbook
@@ -102,6 +103,10 @@ Each public step below happens only on Avi's explicit go.
    ```
 
 4. **Pilot.** 150 native videos. Review `out/<run>/report.md`, then sign, publish and verify. Avi checks the items on Brainstorm.
+
+   Be ready for how long this takes. `run --pilot 150 --first-run` still performs the whole first harvest (about 51,000 native videos, about 1.1 GB read from Divine's relay) and a media check for every eligible video, and only then picks the 150 and writes `report.md`. The rehearsal checked 1,444 media URLs for 810 videos, about two per eligible video. At 5 checks per second that is about 45,000 eligible videos times two, roughly 90,000 checks, so plan on about 5 hours, plus the harvest. The pilot's publish is quick; the cost is up front. The first import then reuses all of it and only publishes.
+
+   An interrupted run is safe to start again. The harvest cursor moves only after a window is fully read, so a harvest that stopped partway re-reads from the start of the window and rewrites the same events without duplicates. Media passes are saved as each batch finishes and are not checked again; media failures are saved only when the run's checks finish, so an interrupted run checks those URLs again.
 
    ```bash
    npm run run -- --pilot 150 --first-run
@@ -142,7 +147,7 @@ Each public step below happens only on Avi's explicit go.
 - Videos vanished in one sweep: at most 5% of listed items.
 - Media failures: more than 20% of the checks in a run looks like a media outage, so no failure is recorded and nothing is deleted for it.
 
-When a guard breaches, `--auto` writes the report, writes `out/<run>/NEEDS_REVIEW` and exits with status 2. `NEEDS_REVIEW` is only a marker. It lists the reasons and nothing reads it back. Open `report.md`; if the change is real, sign and publish the run by hand:
+When a guard breaches, `--auto` writes the report, writes `out/<run>/NEEDS_REVIEW` and exits with status 2. `NEEDS_REVIEW` is only a marker. It lists the reasons, and only `npm run status` and the launchd notification read it. Open `report.md`; if the change is real, sign and publish the run by hand:
 
 ```bash
 npm run sign -- <run>
@@ -152,7 +157,7 @@ npm run verify
 
 An automatic run refuses `--pilot` and `--first-run`, which are for a person.
 
-An automatic run that finds an unfinished earlier run still syncs, sweeps, refreshes profiles and checks media, but builds nothing and exits with status 2, so unfinished runs never pile up. `npm run status` lists the unfinished runs. To clear one, sign and publish it, or delete its folder under `out/` if you mean to abandon it.
+An automatic run that finds an unfinished earlier run still syncs, sweeps, refreshes profiles and checks media, but builds nothing and exits with status 2, so unfinished runs never pile up. `npm run status` lists the unfinished runs. To clear one, sign and publish it, or delete its folder under `out/` if you mean to abandon it. Delete its `NEEDS_REVIEW` file too once you have dealt with it (deleting the folder does that), so `status` and the notification stop pointing at it.
 
 ### Recovery
 
@@ -182,7 +187,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/world.brainstorm.divineb
 
 To test it once without waiting for 06:00: `launchctl kickstart gui/$(id -u)/world.brainstorm.divinebot`. To disable it: `launchctl bootout gui/$(id -u)/world.brainstorm.divinebot`.
 
-An `ncryptsec` key needs `DIVINEBOT_PASSPHRASE_FILE` in the job's environment. An `nsec` key file with mode 600 needs nothing more.
+An `ncryptsec` key needs `DIVINEBOT_PASSPHRASE_FILE` in the job's environment, and a key file anywhere but the default path needs `DIVINEBOT_KEY_FILE`. launchd does not read shell exports or expand `~`, so set them in the commented `EnvironmentVariables` block of the plist, with absolute paths. An `nsec` key file with mode 600 at the default path needs nothing more.
 
 ### Moving to a server
 
@@ -212,13 +217,17 @@ The rehearsal reads real Divine data and publishes only to a local relay. Never 
    nak decode < state/rehearsal/rehearsal.key | nak key public
    ```
 
-3. Copy the example config, then set `curatorPubkey` in `config.rehearsal.json` to that public key, and set `source.harvestSince` to a unix time a few days back so only a small slice of Divine is read (three days is about 800 videos). The file is gitignored. Both target relays are the local relay, and `paths` sit under `state/rehearsal/`.
+3. Copy the example config, then set `curatorPubkey` in `config.rehearsal.json` to that public key, and set `source.harvestSince` to a unix time a few days back so only a small slice of Divine is read (three days is about 800 videos). On macOS, `date -v-3d +%s` prints it. The file is gitignored. Both target relays are the local relay, and `paths` sit under `state/rehearsal/`.
 
    ```bash
    cp config.rehearsal.example.json config.rehearsal.json
    ```
 
-4. Copy Avi's header to the local relay. This reads the public header and writes only to the local relay. The templates are not needed for a build.
+4. Seed the local relay with Avi's header and both URL templates. `build` checks the header on its own relay, so it fails without this. The helper reads them from dcosl with the production `config.json` (it ignores `DIVINEBOT_CONFIG`), publishes them unchanged to the local relay, and refuses any target that is not a `ws://` URL on 127.0.0.1, `[::1]` or localhost. It reads from dcosl and writes only to the local relay. The default target is `ws://127.0.0.1:10547`.
+
+   ```bash
+   npm run rehearsal:seed
+   ```
 
 5. Run everything with the rehearsal settings:
 
@@ -232,7 +241,7 @@ The rehearsal reads real Divine data and publishes only to a local relay. Never 
    npm run status
    ```
 
-   The second `build` should write zero lines: no changes. Stop `nak serve` when done.
+   The pilot built only 150 items, so the second `build` writes the remaining eligible items (in the rehearsal, 568 created and 150 unchanged). Sign, publish and verify that run as well. The idempotence check is a further `build` after those are published: it must create nothing, change nothing and write zero lines to `unsigned.jsonl`. Stop `nak serve` when done.
 
 ## Tests
 

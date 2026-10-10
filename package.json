@@ -21,6 +21,7 @@
     "profile:publish": "tsx src/cli.ts profile:publish",
     "run": "tsx src/cli.ts run",
     "status": "tsx src/cli.ts status",
+    "rehearsal:seed": "tsx scripts/rehearsal-seed.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

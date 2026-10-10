@@ -11,6 +11,19 @@
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/YOU/Documents/Tapestry/divine-videos</string>
+  <!--
+    launchd does not read your shell exports and does not expand ~ or $HOME, so any setting the job
+    needs goes here with absolute paths. Uncomment what you use:
+    DIVINEBOT_KEY_FILE when the key is not at ~/.config/divine-videos/curator.key, and
+    DIVINEBOT_PASSPHRASE_FILE when the key is an ncryptsec (the file must have mode 600).
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DIVINEBOT_KEY_FILE</key>
+    <string>/Users/YOU/.config/divine-videos/curator.key</string>
+    <key>DIVINEBOT_PASSPHRASE_FILE</key>
+    <string>/Users/YOU/.config/divine-videos/curator.pass</string>
+  </dict>
+  -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>

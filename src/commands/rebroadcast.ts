@@ -26,6 +26,24 @@ async function fetchTemplates(url: string, ids: string[], search: string | undef
 }
 
 /**
+ * The header and both templates exactly as `headerRelay` holds them, header first. The header must
+ * pass checkHeader and all three events must be read, or this throws.
+ */
+export async function readHeaderAndTemplates(cfg: Config): Promise<NostrEvent[]> {
+  const source = relayUrl(cfg, cfg.headerRelay);
+  const search = readSearch(cfg, cfg.headerRelay);
+  const header = await fetchHeader(source, cfg.headerCoordinate, undefined, search);
+  checkHeader(header, cfg);
+  const templates = await fetchTemplates(
+    source,
+    [cfg.templateIds["divine-video"], cfg.templateIds["divine-profile"]],
+    search,
+    cfg.publish.okTimeoutMs,
+  );
+  return [header, ...templates];
+}
+
+/**
  * Copies the header and both templates from `headerRelay` to the relay called `toRelay`: the
  * exact events read back (signatures checked on the way in), never re-signed, so the copies
  * have the same ids and sigs. The header must pass checkHeader and all three events must be
@@ -39,21 +57,12 @@ export async function rebroadcast(
   if (toRelay === cfg.headerRelay) {
     throw new Error(`${toRelay} is the header relay: the events are read from there, so there is nothing to copy`);
   }
-  const source = relayUrl(cfg, cfg.headerRelay);
-  const search = readSearch(cfg, cfg.headerRelay);
-  const header = await fetchHeader(source, cfg.headerCoordinate, undefined, search);
-  checkHeader(header, cfg);
-  const templates = await fetchTemplates(
-    source,
-    [cfg.templateIds["divine-video"], cfg.templateIds["divine-profile"]],
-    search,
-    cfg.publish.okTimeoutMs,
-  );
+  const events = await readHeaderAndTemplates(cfg);
 
   const relay = await connectRelay(target, cfg.publish.okTimeoutMs);
   try {
     const results: { eventId: string; ok: boolean; message: string }[] = [];
-    for (const ev of [header, ...templates]) {
+    for (const ev of events) {
       results.push({ eventId: ev.id, ...(await publishEvent(relay, ev, cfg.publish.okTimeoutMs)) });
     }
     return results;
