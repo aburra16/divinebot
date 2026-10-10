@@ -106,24 +106,53 @@ export async function runMediaChecks(cfg: Config, state: State, opts: MediaRunOp
     }
   }
 
-  const verdicts: MediaVerdict[] = [];
-  for (const [url, kind] of queue) {
-    // A batch of requestsPerSecond, then a full second, keeps any one-second window within the limit.
-    if (verdicts.length > 0 && verdicts.length % media.requestsPerSecond === 0) await sleep(1000);
-    verdicts.push(await checkUrl(url, kind, { timeoutMs: media.timeoutMs, fetch: opts.fetch }));
+  let checked = 0;
+  let passed = 0;
+  let inconclusive = 0;
+  // Passes are safe whatever the outage verdict, so they are stored as each batch finishes: a crash
+  // or SIGINT hours into a first harvest keeps what was done. Failures wait for the verdict.
+  let pendingPasses: MediaVerdict[] = [];
+  const failures: MediaVerdict[] = [];
+  const flushPasses = () => {
+    if (pendingPasses.length === 0) return;
+    const batch = pendingPasses;
+    pendingPasses = [];
+    const at = now();
+    state.transaction(() => {
+      for (const v of batch) state.putMedia(v.url, "pass", v.httpStatus, v.contentType, at);
+    });
+  };
+
+  try {
+    for (const [url, kind] of queue) {
+      // A batch of requestsPerSecond, then a full second, keeps any one-second window within the limit.
+      if (checked > 0 && checked % media.requestsPerSecond === 0) {
+        flushPasses();
+        await sleep(1000);
+      }
+      const v = await checkUrl(url, kind, { timeoutMs: media.timeoutMs, fetch: opts.fetch });
+      checked++;
+      if (v.status === "pass") {
+        passed++;
+        pendingPasses.push(v);
+      } else if (v.status === "fail") {
+        failures.push(v);
+      } else {
+        inconclusive++;
+      }
+    }
+  } finally {
+    flushPasses();
   }
 
-  const checked = verdicts.length;
-  const failed = verdicts.filter((v) => v.status === "fail").length;
-  const passed = verdicts.filter((v) => v.status === "pass").length;
+  const failed = failures.length;
   const outage = checked >= OUTAGE_MIN_CHECKS && failed / checked > cfg.guards.maxMediaFailureFraction;
-
-  const at = now();
-  for (const v of verdicts) {
-    if (v.status === "inconclusive") continue;
-    if (v.status === "fail" && outage) continue;
-    state.putMedia(v.url, v.status, v.httpStatus, v.contentType, at);
+  if (!outage && failures.length > 0) {
+    const at = now();
+    state.transaction(() => {
+      for (const v of failures) state.putMedia(v.url, "fail", v.httpStatus, v.contentType, at);
+    });
   }
 
-  return { checked, passed, failed, inconclusive: checked - passed - failed, outage };
+  return { checked, passed, failed, inconclusive, outage };
 }

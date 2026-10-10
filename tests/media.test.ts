@@ -361,3 +361,33 @@ describe("runMediaChecks: pacing", () => {
     expect(sleeps).toEqual([]);
   });
 });
+
+describe("runMediaChecks: durability", () => {
+  it("keeps the passes of finished batches when the run is aborted, and stores no failures", async () => {
+    for (let i = 0; i < 6; i++) addSource(state, source(i)); // 12 requests, batches of 5
+    // the queue is vurl(0), turl(0), vurl(1), turl(1), vurl(2) | turl(2), ...: fail the 2nd of batch 1
+    const { f } = fakeFetch((url) => (url === turl(0) ? res(404) : ok(url)));
+    let sleeps = 0;
+    const sleep = async () => {
+      if (++sleeps === 2) throw new Error("interrupted");
+    };
+    await expect(runMediaChecks(cfg, state, { now: () => NOW, fetch: f, sleep })).rejects.toThrow("interrupted");
+    // batches 1 and 2 (10 requests) finished before the second sleep; 1 failed there
+    expect(state.media(vurl(0))?.status).toBe("pass");
+    expect(state.media(vurl(1))?.status).toBe("pass");
+    expect(state.media(turl(2))?.status).toBe("pass");
+    expect(state.media(turl(0))).toBeUndefined();
+    expect(state.mediaDue(NOW + 1, 100)).toHaveLength(9);
+  });
+
+  it("stores the passes of a batch that finished just before the abort", async () => {
+    for (let i = 0; i < 3; i++) addSource(state, source(i)); // 6 requests
+    const { f } = fakeFetch(ok);
+    // the first batch of 5 is done when the sleep before the 6th request rejects
+    const sleep = async () => {
+      throw new Error("interrupted");
+    };
+    await expect(runMediaChecks(cfg, state, { now: () => NOW, fetch: f, sleep })).rejects.toThrow("interrupted");
+    expect(state.mediaDue(NOW + 1, 100)).toHaveLength(5);
+  });
+});
