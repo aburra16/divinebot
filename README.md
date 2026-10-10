@@ -6,7 +6,7 @@ divinebot fills a nostr DList called "Divine Videos" with the native videos post
 
 - The videos belong to their creators. The list points at Divine's media and Divine's pages and copies public event metadata only (title, caption, creator name, dates and similar). It copies no video or image.
 - This project is not affiliated with Divine.
-- The bot reads Divine's public relay (`wss://relay.divine.video`) within the limits that relay publishes, politely: pages of at most 5,000 events, at least one second apart, one connection at a time, and at most 5 media checks per second. It never uses Divine's REST API.
+- The bot reads Divine's public relay (`wss://relay.divine.video`) within the limits that relay publishes, politely: pages of at most 5,000 events, at least one second apart, one connection at a time, at most 5 media checks per second, and at most 5 NIP-05 lookups per second. It never uses Divine's REST API.
 - Classic Vines (the restored Vine archive) are out of scope for now. They stay behind the `scope.includeVines` switch in `config.json`, which is off.
 - The code is MIT; see `LICENSE`. Fetched data, state and built output (`data/`, `state/`, `out/`) are not committed.
 
@@ -82,7 +82,7 @@ Notes:
 - The weekly sweep happens inside `run`: it runs a sweep when the last one is more than seven days old, and never on the first harvest. No separate schedule is needed.
 - A pilot build never emits deletions. `--pilot N` picks N eligible videos, spread across creators (at most two per creator) and across months. `--pilot` alone uses `pilotSize` from the config.
 - `build` refuses a state with no items unless given `--first-run`. Use it for the very first import only (the pilot).
-- A build skips, and the report counts by reason: `content-warning` (the video carries a content warning), `expiration` (the event carries an `expiration` tag), `no-title` (no usable title, which the header requires), `media-failed` (a stored media check failed) and `media-pending` (a new video whose media checks have not passed yet).
+- A build skips, and the report counts by reason: `no-d` (the video has no usable `d` tag), `bad-d` (its `d` holds a control character or a line or paragraph separator), `content-warning` (the video carries a content warning), `expiration` (the event carries an `expiration` tag), `no-title` (no usable title, which the header requires), `media-failed` (a stored media check failed), `media-pending` (a new video whose media checks have not passed yet), `too-large` (the item would be over 100,000 bytes even without its description; dcosl takes messages of at most 131,072) and `build-error` (the item could not be built; the report names each such video). An item over the size limit with a description is written without it.
 - The rehearsal measured about 9% `no-title` among real native videos (73 of 810). That is roughly 4,600 videos at full scale, and whether to list them under a fallback title is a product decision for Avi before the first import.
 - An item is republished only when its content changes, so reactions to unchanged items stay attached.
 
@@ -105,7 +105,7 @@ Each public step below happens only on Avi's explicit go.
 
 4. **Pilot.** 150 native videos. Review `out/<run>/report.md`, then sign, publish and verify. Avi checks the items on Brainstorm.
 
-   Be ready for how long this takes. `run --pilot 150 --first-run` still performs the whole first harvest (about 51,000 native videos, about 1.1 GB read from Divine's relay) and a media check for every eligible video, and only then picks the 150 and writes `report.md`. The rehearsal checked 1,444 media URLs for 810 videos, about two per eligible video. At 5 checks per second that is about 45,000 eligible videos times two, roughly 90,000 checks, so plan on about 5 hours, plus the harvest. The pilot's publish is quick; the cost is up front. The first import then reuses all of it and only publishes.
+   Be ready for how long this takes. `run --pilot 150 --first-run` still performs the whole first harvest (about 51,000 native videos, about 1.1 GB read from Divine's relay) and a media check for every eligible video, and only then picks the 150 and writes `report.md`. The rehearsal checked 1,444 media URLs for 722 eligible videos, about two per eligible video. At 5 checks per second that is about 45,000 eligible videos times two, roughly 90,000 checks, so plan on about 5 hours, plus the harvest. The pilot's publish is quick; the cost is up front. The first import then reuses all of it and only publishes.
 
    An interrupted run is safe to start again. The harvest cursor moves only after a window is fully read, so a harvest that stopped partway re-reads from the start of the window and rewrites the same events without duplicates. Media passes are saved as each batch finishes and are not checked again; media failures are saved only when the run's checks finish, so an interrupted run checks those URLs again.
 
@@ -147,6 +147,7 @@ Each public step below happens only on Avi's explicit go.
 - Deletions per run: at most the larger of 25 and 2% of listed items.
 - Videos vanished in one sweep: at most 5% of listed items.
 - Media failures: more than 20% of the checks in a run looks like a media outage, so no failure is recorded and nothing is deleted for it.
+- Empty source (`sourceEmpty`): the run's sync read no videos at all while state holds active videos from the week before the videos cursor. That points at Divine's relay rather than at the creators, so the run stops for review.
 
 When a guard breaches, `--auto` writes the report, writes `out/<run>/NEEDS_REVIEW` and exits with status 2. `NEEDS_REVIEW` is only a marker. It lists the reasons, and only `npm run status` and the launchd notification read it. Open `report.md`; if the change is real, sign and publish the run by hand:
 
@@ -284,6 +285,12 @@ The rehearsal reads real Divine data and publishes only to a local relay. Never 
    ```
 
    The pilot built only 150 items, so the second `build` writes the remaining eligible items (in the rehearsal, 568 created and 150 unchanged). Sign, publish and verify that run as well. The idempotence check is a further `build` after those are published: it must create nothing, change nothing and write zero lines to `unsigned.jsonl`. Stop `nak serve` when done.
+
+6. Clear the rehearsal settings from the shell, so no later command in it uses the rehearsal config or the throwaway key:
+
+   ```bash
+   unset DIVINEBOT_CONFIG DIVINEBOT_KEY_FILE
+   ```
 
 ## Tests
 
