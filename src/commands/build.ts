@@ -8,7 +8,7 @@ import { breachesOf, guardResults, type GuardBreach, type GuardInput } from "../
 import { checkHeader, fetchHeader } from "../header.js";
 import { buildItem, itemD } from "../item.js";
 import { configIdentity } from "../manifest.js";
-import { isHttps, videoUrl, type MediaRunResult } from "../media.js";
+import { thumbnailUrl, videoUrl, type MediaRunResult } from "../media.js";
 import { selectPilot } from "../pilot.js";
 import { cachedNip05, creatorName } from "../profiles.js";
 import { renderReport, type ReportDeletion } from "../report.js";
@@ -133,8 +133,8 @@ function verdictFor(cfg: Config, state: State, row: SourceRow | undefined): Verd
   const meta = imeta(row.event);
   const sha = meta?.x;
   if (!sha) return { kind: "gone", reason: "no longer eligible: no video hash" };
-  // The same rule media.ts uses to decide whether a thumbnail is checked at all.
-  const thumb = isHttps(meta?.image) ? meta!.image : undefined;
+  // The exact string media.ts checks and buildItem writes.
+  const thumb = thumbnailUrl(row.event);
   const video = state.media(videoUrl(sha, cfg.media.base));
   const image = thumb === undefined ? undefined : state.media(thumb);
   if (video?.status === "fail") {

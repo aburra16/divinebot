@@ -1,3 +1,4 @@
+import type { NostrEvent } from "nostr-tools/core";
 import type { Config } from "./config.js";
 import { imeta } from "./source/classify.js";
 import type { State } from "./state.js";
@@ -66,14 +67,24 @@ export async function checkUrl(
   return verdict(right ? "pass" : "fail");
 }
 
-/** True for a URL whose protocol is https; the media checks look at a thumbnail only then. */
-export function isHttps(value: string | undefined): value is string {
+function isHttps(value: string | undefined): value is string {
   if (!value) return false;
   try {
     return new URL(value).protocol === "https:";
   } catch {
     return false;
   }
+}
+
+/**
+ * The thumbnail of a source event: its `imeta` `image` exactly as written, when that string parses
+ * as an https URL, else undefined. The one definition of a thumbnail: the media checks check this
+ * string, build requires a pass row for this string, and the item writes this string. Nothing is
+ * trimmed or normalized, so the three can never disagree.
+ */
+export function thumbnailUrl(ev: NostrEvent): string | undefined {
+  const image = imeta(ev)?.image;
+  return isHttps(image) ? image : undefined;
 }
 
 /**
@@ -96,7 +107,8 @@ export async function runMediaChecks(cfg: Config, state: State, opts: MediaRunOp
       const url = videoUrl(meta.x, media.base);
       if (!queue.has(url) && !state.media(url)) queue.set(url, "video");
     }
-    if (isHttps(meta.image) && !queue.has(meta.image) && !state.media(meta.image)) queue.set(meta.image, "image");
+    const thumb = thumbnailUrl(source.event);
+    if (thumb !== undefined && !queue.has(thumb) && !state.media(thumb)) queue.set(thumb, "image");
   }
 
   const live = state.counts().live;

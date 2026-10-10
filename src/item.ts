@@ -1,6 +1,6 @@
 import type { NostrEvent } from "nostr-tools/core";
 import { npubEncode } from "nostr-tools/nip19";
-import { isHttps, videoUrl } from "./media.js";
+import { thumbnailUrl, videoUrl } from "./media.js";
 import { classOf, imeta, titleOf } from "./source/classify.js";
 import { tagValue, type Tags } from "./tags.js";
 
@@ -72,7 +72,6 @@ export function buildItem(ev: NostrEvent, ctx: ItemContext): Tags {
 
   const creator = clean(isVine ? tagValue(ev.tags, "author") : ctx.creator);
   const summary = clean(tagValue(ev.tags, "summary"));
-  const image = meta?.image?.trim();
   const language = ev.tags.find((t) => t[0] === "l" && t[2] === "ISO-639-1")?.[1];
 
   const tags: Tags = [];
@@ -84,8 +83,8 @@ export function buildItem(ev: NostrEvent, ctx: ItemContext): Tags {
   add("z", ctx.headerCoordinate);
   add("title", title);
   add("video", videoUrl(sha256, ctx.mediaBase));
-  // The same predicate media.ts and build use, so a thumbnail is written only when it was checked.
-  add("thumbnail", isHttps(image) ? image : undefined);
+  // The exact string media.ts checks and build requires a pass for.
+  add("thumbnail", thumbnailUrl(ev));
   add("creator", creator);
   add("creator-npub", npubEncode(ev.pubkey));
   add("creator-nip05", clean(ctx.nip05));

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { NostrEvent } from "nostr-tools/core";
 import { loadConfig, type Config } from "../src/config.js";
-import { checkUrl, runMediaChecks, videoUrl } from "../src/media.js";
+import { checkUrl, runMediaChecks, thumbnailUrl, videoUrl } from "../src/media.js";
 import { openState, type State } from "../src/state.js";
 
 const cfg: Config = loadConfig(new URL("../config.json", import.meta.url).pathname);
@@ -68,6 +68,17 @@ describe("videoUrl", () => {
     const url = videoUrl(sha, "https://media.divine.video");
     expect(url).toBe(`https://media.divine.video/${sha}.mp4`);
     expect(items).toContain(url);
+  });
+});
+
+describe("thumbnailUrl", () => {
+  it("returns imeta image exactly as written when it parses as https, else undefined", () => {
+    expect(thumbnailUrl(source(1))).toBe(turl(1));
+    expect(thumbnailUrl(source(1, { image: null }))).toBeUndefined();
+    for (const bad of ["http://x.test/a.jpg", "https://", "https://exa mple.com/a.jpg", "\u00a0https://x.test/a.jpg", "\ufeffhttps://x.test/a.jpg"]) {
+      expect(thumbnailUrl(source(1, { image: bad }))).toBeUndefined();
+    }
+    expect(thumbnailUrl(source(1, { image: "  https://x.test/a.jpg  " }))).toBe("  https://x.test/a.jpg  ");
   });
 });
 
@@ -156,6 +167,25 @@ describe("runMediaChecks: what gets checked", () => {
     expect(calls.map((c) => c.url).sort()).toEqual([vurl(1), vurl(2), vurl(3)].sort());
     expect(r.checked).toBe(3);
     expect(state.media("http://media.divine.video/thumb-2")).toBeUndefined();
+  });
+
+  it("never queues an image led by U+00A0 or U+FEFF, which is not an https URL as written", async () => {
+    addSource(state, source(1, { image: "\u00a0https://media.divine.video/thumb-1" }));
+    addSource(state, source(2, { image: "\ufeffhttps://media.divine.video/thumb-2" }));
+    const { f, calls } = fakeFetch(ok);
+    await runMediaChecks(cfg, state, { now: () => NOW, fetch: f, sleep: noSleep });
+    expect(calls.map((c) => c.url).sort()).toEqual([vurl(1), vurl(2)].sort());
+  });
+
+  it("checks an ASCII-padded https image under exactly the string thumbnailUrl gives", async () => {
+    const padded = "  https://media.divine.video/thumb-1  ";
+    const ev = source(1, { image: padded });
+    expect(thumbnailUrl(ev)).toBe(padded);
+    addSource(state, ev);
+    const { f, calls } = fakeFetch(ok);
+    await runMediaChecks(cfg, state, { now: () => NOW, fetch: f, sleep: noSleep });
+    expect(calls.map((c) => c.url)).toContain(padded);
+    expect(state.media(padded)?.status).toBe("pass");
   });
 
   it("does not check a URL that already has a media row, however old", async () => {

@@ -8,7 +8,7 @@ import { loadConfig, type Config } from "../src/config.js";
 import type { Unsigned } from "../src/deletion.js";
 import { contentHash } from "../src/diff.js";
 import { buildItem, itemD } from "../src/item.js";
-import { videoUrl, type MediaRunResult } from "../src/media.js";
+import { thumbnailUrl, videoUrl, type MediaRunResult } from "../src/media.js";
 import { classOf, imeta, skipReason, slim } from "../src/source/classify.js";
 import type { SyncResult } from "../src/source/sync.js";
 import { openState, type State } from "../src/state.js";
@@ -286,6 +286,34 @@ describe("build", () => {
     expect(result.created).toBe(2);
     expect(result.skipped["media-pending"]).toBeUndefined();
     for (const item of lines(result.runDir)) expect(tag(item.tags, "thumbnail")).toBeUndefined();
+  });
+
+  it("needs and writes the thumbnail only as thumbnailUrl gives it: U+00A0 and U+FEFF images are none, a padded one is exact", async () => {
+    const ev = eligible[0]!;
+    const make = (image: string, i: number): NostrEvent => ({
+      ...ev,
+      id: contentHash([["image", String(i)]]),
+      pubkey: (i + 1).toString(16).padStart(64, "0"),
+      tags: ev.tags.map((t) => (t[0] === "imeta" ? t.map((v) => (v.startsWith("image ") ? `image ${image}` : v)) : t)),
+    });
+    const nbsp = make("\u00a0https://example.com/a.jpg", 0);
+    const bom = make("\ufeffhttps://example.com/b.jpg", 1);
+    const padded = make("  https://example.com/c.jpg  ", 2);
+    seed([nbsp, bom, padded]);
+    state.putMedia(videoUrl(imeta(ev)!.x!, cfg.media.base), "pass", 200, "video/mp4", NOW);
+
+    // Video row alone: the first two are built without a thumbnail; the padded one waits for its thumbnail row.
+    const first = await run({ runId: "r1" });
+    expect(lines(first.runDir).map((e) => [tag(e.tags, "d"), tag(e.tags, "thumbnail")])).toEqual(
+      [itemD(nbsp), itemD(bom)].sort().map((d) => [d, undefined]),
+    );
+    expect(first.skipped["media-pending"]).toBe(1);
+
+    // A pass row under the exact padded string builds it, writing that same string.
+    state.putMedia(thumbnailUrl(padded)!, "pass", 200, "image/jpeg", NOW);
+    const second = await run({ runId: "r2" });
+    const item = lines(second.runDir).find((e) => tag(e.tags, "d") === itemD(padded))!;
+    expect(tag(item.tags, "thumbnail")).toBe("  https://example.com/c.jpg  ");
   });
 
   it("holds a video whose media checks are pending: not built new, and a live item is kept as it is", async () => {

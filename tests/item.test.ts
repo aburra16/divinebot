@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { NostrEvent } from "nostr-tools/core";
 import { buildItem, itemD, type ItemContext } from "../src/item.js";
+import { thumbnailUrl } from "../src/media.js";
 import { tagValue, type Tags } from "../src/tags.js";
 
 function load(name: string): NostrEvent[] {
@@ -86,6 +87,19 @@ describe("buildItem fallbacks", () => {
       );
       expect(tagValue(buildItem(ev, ctx), "thumbnail")).toBeUndefined();
     }
+  });
+
+  it("writes no thumbnail for an image led by U+00A0 or U+FEFF, and an ASCII-padded one exactly as thumbnailUrl gives it", () => {
+    const withImage = (image: string) =>
+      withTags(native, (tags) =>
+        tags.map((t) => (t[0] === "imeta" ? t.map((e) => (e.startsWith("image ") ? `image ${image}` : e)) : t)),
+      );
+    for (const bad of ["\u00a0https://example.com/a.jpg", "\ufeffhttps://example.com/a.jpg"]) {
+      expect(tagValue(buildItem(withImage(bad), ctx), "thumbnail")).toBeUndefined();
+    }
+    const padded = withImage("  https://example.com/a.jpg  ");
+    expect(thumbnailUrl(padded)).toBe("  https://example.com/a.jpg  ");
+    expect(tagValue(buildItem(padded, ctx), "thumbnail")).toBe(thumbnailUrl(padded));
   });
 
   it("publishes the created_at date when published_at is missing", () => {
