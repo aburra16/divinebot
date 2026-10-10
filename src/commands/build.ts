@@ -6,12 +6,12 @@ import { deletionFor, type Unsigned } from "../deletion.js";
 import { diffItems, parseTags, summarizeChanges } from "../diff.js";
 import { breachesOf, guardResults, type GuardBreach, type GuardInput } from "../guards.js";
 import { checkHeader, fetchHeader } from "../header.js";
-import { buildItem, itemD } from "../item.js";
+import { buildItem, fitItem, itemD } from "../item.js";
 import { configIdentity } from "../manifest.js";
 import { thumbnailUrl, videoUrl, type MediaRunResult } from "../media.js";
 import { selectPilot } from "../pilot.js";
 import { cachedNip05, creatorName } from "../profiles.js";
-import { renderReport, type ReportDeletion } from "../report.js";
+import { renderReport, type ReportBuildError, type ReportDeletion } from "../report.js";
 import { imeta } from "../source/classify.js";
 import { unixNow, type SyncResult } from "../source/sync.js";
 import type { SourceRow, State } from "../state.js";
@@ -42,7 +42,10 @@ export interface BuildResult {
   changed: number;
   unchanged: number;
   deletions: number;
-  /** Active native videos not built, by skip reason, plus `media-failed` and `media-pending`. */
+  /**
+   * Active native videos not built, by skip reason, plus `media-failed`, `media-pending`,
+   * `too-large` (over the item size limit even without a description) and `build-error`.
+   */
   skipped: Record<string, number>;
   /** Guards this run breaches. The run is written anyway; `run --auto` decides what to do. */
   breaches: GuardBreach[];
@@ -213,6 +216,7 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
   const sourceCounts = { active: 0, eligible: 0, deleted: 0, vanished: 0 };
   const buildable = new Map<string, { tags: Tags; pubkey: string }>();
   const verdicts = new Map<string, Verdict>();
+  const buildErrors: ReportBuildError[] = [];
   for (const row of scoped) {
     if (row.class === "native") {
       if (row.status === "active") sourceCounts.active++;
@@ -224,10 +228,22 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
     const verdict = verdictFor(cfg, state, row);
     verdicts.set(row.address, verdict);
     if (verdict.kind === "build") {
-      buildable.set(itemD(row.event), {
-        pubkey: row.event.pubkey,
-        tags: buildItem(row.event, { headerCoordinate: cfg.headerCoordinate, mediaBase: cfg.media.base, ...contextFor(row.event.pubkey) }),
-      });
+      let tags: Tags | undefined;
+      try {
+        tags = buildItem(row.event, { headerCoordinate: cfg.headerCoordinate, mediaBase: cfg.media.base, ...contextFor(row.event.pubkey) });
+      } catch (err) {
+        // One odd source must not stop the build. Its live item, if any, is kept as it is.
+        increment(skipped, "build-error");
+        buildErrors.push({ address: row.address, message: err instanceof Error ? err.message : String(err) });
+        continue;
+      }
+      const fitted = fitItem(tags);
+      if (fitted === undefined) {
+        increment(skipped, "too-large");
+        verdicts.set(row.address, { kind: "gone", reason: "no longer eligible: too-large" });
+        continue;
+      }
+      buildable.set(itemD(row.event), { pubkey: row.event.pubkey, tags: fitted });
     } else if (verdict.kind === "gone" && verdict.mediaFailed) {
       increment(skipped, "media-failed");
     } else if (verdict.kind === "pending" && !live.has(itemD(row.event))) {
@@ -235,7 +251,7 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
     }
   }
 
-  // Every live item is built, kept (pending media) or gone.
+  // Every live item is built, kept (pending media, or a build error) or gone.
   let keptPending = 0;
   const gone: { d: string; reason: string }[] = [];
   for (const [d, item] of live) {
@@ -324,6 +340,7 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
     changes: summarizeChanges(diff.changed, live),
     titles: new Map(diff.changed.map((tags) => [tagValue(tags, "d") ?? "", tagValue(tags, "title") ?? ""])),
     deletions: reportDeletions,
+    buildErrors,
     guards,
     built,
   });

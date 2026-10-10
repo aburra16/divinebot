@@ -389,6 +389,53 @@ describe("build", () => {
     expect(report).not.toMatch(/—/);
   });
 
+  it("counts a source whose item cannot be built as build-error, names it in the report and writes the rest", async () => {
+    seedAll();
+    // A row stored as eligible whose event has no title: buildItem throws for it.
+    const ev = eligible[0]!;
+    const broken: NostrEvent = {
+      ...ev,
+      id: contentHash([["broken"]]),
+      pubkey: "ab".repeat(32),
+      tags: ev.tags.filter((t) => t[0] !== "title" && t[0] !== "summary"),
+    };
+    state.upsertSource(slim(broken), "native", null, NOW);
+
+    const result = await run({ runId: "r1" });
+    expect(result.skipped["build-error"]).toBe(1);
+    expect(result.created).toBe(eligible.length);
+    expect(lines(result.runDir)).toHaveLength(eligible.length);
+    const report = readFileSync(join(result.runDir, "report.md"), "utf8");
+    expect(report).toMatch(/\| build-error \| 1 \|/);
+    expect(report).toContain(addrOf(broken));
+    expect(report).toContain("has no title");
+  });
+
+  it("drops the description of an item over the size limit, and skips the source as too-large when that is not enough", async () => {
+    const ev = eligible[0]!;
+    const make = (i: number, tags: string[][]): NostrEvent => ({
+      ...ev,
+      id: contentHash([["big", String(i)]]),
+      pubkey: (i + 1).toString(16).padStart(64, "0"),
+      tags,
+    });
+    const big = "a".repeat(300_000);
+    const longSummary = make(0, [...ev.tags.filter((t) => t[0] !== "summary"), ["summary", big]]);
+    const longTitle = make(1, [...ev.tags.filter((t) => t[0] !== "title"), ["title", big]]);
+    seed([longSummary, longTitle]);
+    passMedia([longSummary, longTitle]);
+
+    const result = await run({ runId: "r1" });
+    expect(result.created).toBe(1);
+    expect(result.skipped["too-large"]).toBe(1);
+    const [item] = lines(result.runDir);
+    expect(tag(item!.tags, "d")).toBe(itemD(longSummary));
+    expect(tag(item!.tags, "description")).toBeUndefined();
+    expect(tag(item!.tags, "title")).toBe(tag(ev.tags, "title"));
+    const report = readFileSync(join(result.runDir, "report.md"), "utf8");
+    expect(report).toMatch(/\| too-large \| 1 \|/);
+  });
+
   it("writes manifest.json with the config identity, counts and breaches", async () => {
     seedAll();
     const { runDir } = await run({ runId: "r1", vanished: 5 });

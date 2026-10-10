@@ -139,6 +139,18 @@ describe("publish", () => {
     expect(live.has("divine-cc-vid-3")).toBe(false);
   });
 
+  it("accepts an item whose source d holds a line separator or line break, as build would write it", async () => {
+    const relay = await stub(acceptAll);
+    const events = [item("divine-ee-a b"), item("divine-ee-c\nd"), item("divine-ee-e f")];
+    writeSigned(events);
+
+    const result = await publish(config({ dcosl: relay.url }), state, runDir);
+
+    expect(result.dcosl).toMatchObject({ sent: 3, ok: 3 });
+    expect(state.liveItems().get("divine-ee-a b")!.address).toBe(sourceAddress("divine-ee-a b"));
+    expect(state.liveItems().get("divine-ee-c\nd")!.address).toBe(sourceAddress("divine-ee-c\nd"));
+  });
+
   it("marks an item live on its first OK only, and a deletion's item deleted", async () => {
     const [a, b] = [await stub(acceptAll), await stub(acceptAll)];
     const first = item("osm-node-1");

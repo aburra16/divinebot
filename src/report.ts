@@ -13,6 +13,12 @@ export interface ReportDeletion {
   eventIds: number;
 }
 
+/** A source whose item could not be built, and the error. */
+export interface ReportBuildError {
+  address: string;
+  message: string;
+}
+
 export interface ReportInput {
   runId: string;
   header: NostrEvent;
@@ -27,6 +33,8 @@ export interface ReportInput {
   /** Title of each changed item by `d`, for the examples. */
   titles: ReadonlyMap<string, string>;
   deletions: ReportDeletion[];
+  /** Sources counted under `build-error`. */
+  buildErrors?: ReportBuildError[];
   guards: GuardResult[];
   /** The items this run would hold: built items for a full build, the picks for a pilot. */
   built: ReadonlyMap<string, Tags>;
@@ -128,9 +136,14 @@ export function renderReport(r: ReportInput): string {
     "## Skipped",
     "",
     "Active native videos not built this run, by reason. `media-failed`: a stored media check failed. " +
-      "`media-pending`: a new video whose media checks have not passed yet.",
+      "`media-pending`: a new video whose media checks have not passed yet. " +
+      "`too-large`: the item would be too large for the relays even without its description. " +
+      "`build-error`: the item could not be built; each one is listed below and its live item, if any, is kept as it is.",
     "",
     skipped.length === 0 ? "none" : table(["reason", "videos"], skipped),
+    ...((r.buildErrors ?? []).length === 0
+      ? []
+      : ["", "Build errors:", "", bullets(r.buildErrors!.map(({ address, message }) => `${codeSpan(address)}: ${message.replace(/\s+/g, " ")}`))]),
     "",
     "## Changed fields",
     "",

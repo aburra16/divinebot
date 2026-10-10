@@ -14,7 +14,8 @@ const ITEM_KIND = 39999;
 const DELETION_KIND = 5;
 /** The kind of the source video an item is built from. */
 const SOURCE_KIND = 34236;
-const SOURCE_ADDRESS_RE = new RegExp(`^${SOURCE_KIND}:([0-9a-f]{64}:.+)$`);
+/** Any non-empty d, line breaks and separators included (`s`), so publish never refuses what build wrote. */
+const SOURCE_ADDRESS_RE = new RegExp(`^${SOURCE_KIND}:([0-9a-f]{64}:.+)$`, "s");
 const PENDING = "pending";
 const RATE_LIMITED = "rate-limited";
 /** The message nostr-tools rejects a publish with when no OK came within the timeout. */

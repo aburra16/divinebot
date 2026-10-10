@@ -112,6 +112,25 @@ describe("skipReason", () => {
   it("no-imeta", () => {
     expect(skipReason(withTags(first, (t) => t.filter((x) => x[0] !== "imeta")), scope)).toBe("no-imeta");
   });
+  it("no-d when the d tag is missing, empty or only whitespace", () => {
+    expect(skipReason(withTags(first, (t) => t.filter((x) => x[0] !== "d")), scope)).toBe("no-d");
+    expect(skipReason(setTag(first, "d", ""), scope)).toBe("no-d");
+    expect(skipReason(setTag(first, "d", " \t "), scope)).toBe("no-d");
+    expect(skipReason(withTags(first, (t) => [...t.filter((x) => x[0] !== "d"), ["d"]]), scope)).toBe("no-d");
+  });
+  it("no-d comes right after scope and before every other rule", () => {
+    const noD = withTags(first, (t) => t.filter((x) => x[0] !== "d" && x[0] !== "imeta"));
+    expect(skipReason(noD, scope)).toBe("no-d");
+    const vineNoD = withTags(vine[0]!, (t) => t.filter((x) => x[0] !== "d"));
+    expect(skipReason(vineNoD, scope)).toBe("classic-vine");
+  });
+  it("bad-d when the d holds a control character or a line or paragraph separator", () => {
+    const d = first.tags.find((t) => t[0] === "d")![1]!;
+    for (const bad of ["\n", "\r", " ", " ", "\u0000", "\u007f", "\u0085"]) {
+      expect(skipReason(setTag(first, "d", `${d}${bad}x`), scope)).toBe("bad-d");
+    }
+    expect(skipReason(setTag(first, "d", `${d} é ✓`), scope)).toBeNull();
+  });
   it("bad-sha256", () => {
     const x = imeta(first)!.x!;
     expect(skipReason(setImeta(first, "x", x.slice(0, 63)), scope)).toBe("bad-sha256");

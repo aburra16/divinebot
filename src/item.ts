@@ -14,6 +14,29 @@ export interface ItemContext {
   nip05?: string;
 }
 
+/**
+ * The largest item, in bytes of its `["EVENT", …]` message, that build writes. dcosl's
+ * max_message_length is 131072 bytes, and a relay refuses a larger message every time it is sent.
+ * This leaves room for the real id, pubkey, created_at and signature and for a relay's own framing.
+ */
+export const MAX_ITEM_MESSAGE_BYTES = 100_000;
+
+/** Bytes of the `["EVENT", …]` message that would carry an item with these tags once signed. */
+export function itemMessageBytes(tags: Tags): number {
+  const signed = { kind: 39999, tags, content: "", id: "0".repeat(64), pubkey: "0".repeat(64), created_at: 0, sig: "0".repeat(128) };
+  return Buffer.byteLength(JSON.stringify(["EVENT", signed]), "utf8");
+}
+
+/**
+ * The item's tags as build writes them: as they are when they fit `MAX_ITEM_MESSAGE_BYTES`, else
+ * without `description`, else undefined (the source is skipped as too large).
+ */
+export function fitItem(tags: Tags): Tags | undefined {
+  if (itemMessageBytes(tags) <= MAX_ITEM_MESSAGE_BYTES) return tags;
+  const trimmed = tags.filter((t) => t[0] !== "description");
+  return itemMessageBytes(trimmed) <= MAX_ITEM_MESSAGE_BYTES ? trimmed : undefined;
+}
+
 /** The item's `d` tag: `divine-<pubkey>-<source d>`. */
 export function itemD(ev: NostrEvent): string {
   return `divine-${ev.pubkey}-${tagValue(ev.tags, "d") ?? ""}`;
