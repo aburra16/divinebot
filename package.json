@@ -1,0 +1,40 @@
+{
+  "name": "divinebot",
+  "version": "0.1.0",
+  "description": "Fills a nostr DList with items built from Divine videos",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "sync": "tsx src/cli.ts sync",
+    "sweep": "tsx src/cli.ts sweep",
+    "media": "tsx src/cli.ts media",
+    "profiles": "tsx src/cli.ts profiles",
+    "build": "tsx src/cli.ts build",
+    "sign": "tsx src/cli.ts sign",
+    "publish": "tsx src/cli.ts publish",
+    "verify": "tsx src/cli.ts verify",
+    "rebroadcast": "tsx src/cli.ts rebroadcast",
+    "profile:publish": "tsx src/cli.ts profile:publish",
+    "run": "tsx src/cli.ts run",
+    "status": "tsx src/cli.ts status",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "nostr-tools": "2.25.2",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.20.5",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.7"
+  }
+}

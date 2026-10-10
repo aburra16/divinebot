@@ -1,0 +1,58 @@
+{
+  "headerCoordinate": "39998:b83a28b7e4e5d20bd960c5faeb6625f95529166b8bdb045d42634a2f35919450:divine-videos",
+  "curatorPubkey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "templateIds": {
+    "divine-video": "97d7f683f8cfea346e389042430e1795fc6ddae25ee9dff298c95867d707b7ee",
+    "divine-profile": "f07980288c1036e748bf80070b07cc2780a295b3ee15dd8b306dfea87abafd20"
+  },
+  "relays": {
+    "dcosl": "ws://127.0.0.1:10547",
+    "search": "ws://127.0.0.1:10547"
+  },
+  "headerRelay": "dcosl",
+  "source": {
+    "relay": "wss://relay.divine.video",
+    "pageSize": 5000,
+    "pageDelayMs": 1000,
+    "harvestSince": 1735689600,
+    "overlapSeconds": 3600,
+    "readTimeoutMs": 30000
+  },
+  "media": {
+    "base": "https://media.divine.video",
+    "requestsPerSecond": 5,
+    "recheckDays": 30,
+    "timeoutMs": 10000
+  },
+  "profiles": {
+    "batchSize": 500,
+    "refreshDays": 7,
+    "nip05TtlDays": 7,
+    "nip05TimeoutMs": 5000
+  },
+  "profileRelays": [
+    "wss://relay.damus.io",
+    "wss://relay.primal.net",
+    "wss://nos.lol",
+    "wss://purplepag.es"
+  ],
+  "scope": {
+    "includeVines": false
+  },
+  "publish": {
+    "eventsPerSecond": 5,
+    "okTimeoutMs": 10000
+  },
+  "guards": {
+    "maxNewOrChanged": 2000,
+    "maxDeletionsFloor": 25,
+    "maxDeletionsFraction": 0.02,
+    "maxVanishedFraction": 0.05,
+    "maxMediaFailureFraction": 0.2
+  },
+  "pilotSize": 150,
+  "paths": {
+    "out": "state/rehearsal/out",
+    "state": "state/rehearsal/state.sqlite"
+  }
+}
