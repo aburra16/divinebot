@@ -1,0 +1,6 @@
+{
+  "name": "divinebot",
+  "display_name": "Divine Videos",
+  "about": "Automated account. Lists videos posted on Divine (divine.video) in the Divine Videos list on brainstorm.world. It does not review or rank videos. Videos belong to their creators. Not affiliated with Divine.",
+  "bot": true
+}

@@ -5,3 +5,4 @@ state/
 *.key
 config.rehearsal.json
 .DS_Store
+profile.json
