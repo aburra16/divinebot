@@ -272,6 +272,22 @@ describe("build", () => {
     expect(tag(lines(result.runDir)[0]!.tags, "thumbnail")).toBeUndefined();
   });
 
+  it("treats an unparseable https:// image as no thumbnail: built on the video row alone, without a thumbnail tag", async () => {
+    const ev = eligible[0]!;
+    const bad = ["https://", "https://exa mple.com/a.jpg"].map((image, i): NostrEvent => ({
+      ...ev,
+      id: contentHash([["bad-image", String(i)]]),
+      pubkey: (i + 1).toString(16).padStart(64, "0"),
+      tags: ev.tags.map((t) => (t[0] === "imeta" ? t.map((v) => (v.startsWith("image ") ? `image ${image}` : v)) : t)),
+    }));
+    seed(bad);
+    state.putMedia(videoUrl(imeta(ev)!.x!, cfg.media.base), "pass", 200, "video/mp4", NOW);
+    const result = await run({ runId: "r1" });
+    expect(result.created).toBe(2);
+    expect(result.skipped["media-pending"]).toBeUndefined();
+    for (const item of lines(result.runDir)) expect(tag(item.tags, "thumbnail")).toBeUndefined();
+  });
+
   it("holds a video whose media checks are pending: not built new, and a live item is kept as it is", async () => {
     seed();
     passMedia(eligible.slice(2));

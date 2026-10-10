@@ -1,6 +1,6 @@
 import type { NostrEvent } from "nostr-tools/core";
 import { npubEncode } from "nostr-tools/nip19";
-import { videoUrl } from "./media.js";
+import { isHttps, videoUrl } from "./media.js";
 import { classOf, imeta, titleOf } from "./source/classify.js";
 import { tagValue, type Tags } from "./tags.js";
 
@@ -84,7 +84,8 @@ export function buildItem(ev: NostrEvent, ctx: ItemContext): Tags {
   add("z", ctx.headerCoordinate);
   add("title", title);
   add("video", videoUrl(sha256, ctx.mediaBase));
-  add("thumbnail", image?.startsWith("https://") ? image : undefined);
+  // The same predicate media.ts and build use, so a thumbnail is written only when it was checked.
+  add("thumbnail", isHttps(image) ? image : undefined);
   add("creator", creator);
   add("creator-npub", npubEncode(ev.pubkey));
   add("creator-nip05", clean(ctx.nip05));

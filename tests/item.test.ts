@@ -79,6 +79,15 @@ describe("buildItem fallbacks", () => {
     expect(tagValue(buildItem(http, ctx), "thumbnail")).toBeUndefined();
   });
 
+  it("omits a thumbnail that starts with https:// but is not a parseable https URL, as the media checks do", () => {
+    for (const bad of ["https://", "https://exa mple.com/a.jpg"]) {
+      const ev = withTags(native, (tags) =>
+        tags.map((t) => (t[0] === "imeta" ? t.map((e) => (e.startsWith("image ") ? `image ${bad}` : e)) : t)),
+      );
+      expect(tagValue(buildItem(ev, ctx), "thumbnail")).toBeUndefined();
+    }
+  });
+
   it("publishes the created_at date when published_at is missing", () => {
     const tags = buildItem(dropTag(native, "published_at"), ctx);
     expect(tagValue(tags, "published")).toBe("2026-10-09");
