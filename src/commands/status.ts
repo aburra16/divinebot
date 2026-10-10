@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config.js";
+import { earlierRunWarnings } from "../earlier-runs.js";
 import type { CursorName, State } from "../state.js";
 
 const CLASSES = ["native", "vine", "user-submitted"] as const;
@@ -33,7 +34,8 @@ function runsNeedingReview(cfg: Config): string[] {
 /**
  * What `npm run status` prints, as plain lines: live and deleted items, eligible active sources by
  * class, the active sources that are skipped and why, the cursors as UTC times, each relay's
- * latest run, and the run dirs waiting for review. Reads state with counts and tallies only, so
+ * latest run, the earlier runs that are not fully published (what actually stops an unattended
+ * run), and the run dirs marked NEEDS_REVIEW. Reads state with counts and tallies only, so
  * it stays quick on a large state.
  */
 export function status(cfg: Config, state: State): string {
@@ -80,10 +82,17 @@ export function status(cfg: Config, state: State): string {
     }
   }
 
+  const unfinished = earlierRunWarnings(cfg, state);
+  if (unfinished.length > 0) {
+    lines.push("unfinished runs (an unattended run builds nothing while any exists):");
+    for (const warning of unfinished) lines.push(`  ${warning}`);
+    lines.push("  sign and publish the run you want to keep, or delete the run's folder under out/ to discard it");
+  }
+
   const review = runsNeedingReview(cfg);
   if (review.length > 0) {
-    lines.push(`needs review: ${review.join(", ")}`);
-    lines.push("  read each run's NEEDS_REVIEW and report.md, finish or discard the run, then delete the NEEDS_REVIEW file");
+    lines.push(`runs marked NEEDS_REVIEW (the build breached a guard): ${review.join(", ")}`);
+    lines.push("  NEEDS_REVIEW is only a marker; deleting it unblocks nothing. Read it and report.md, then finish or discard the run as above");
   }
   return `${lines.join("\n")}\n`;
 }

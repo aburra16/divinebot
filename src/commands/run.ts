@@ -36,7 +36,7 @@ export interface PipelineDeps {
 }
 
 export interface RunOutcome {
-  /** The run `build` wrote. Null only if the run stopped before building, which does not return. */
+  /** The run `build` wrote; null when an unattended run stopped before building (an earlier run is unfinished). */
   runDir: string | null;
   /** True when an unattended run stopped at the review gate: the run is built and left unsigned. */
   stoppedForReview: boolean;
@@ -102,8 +102,10 @@ async function autoPassphrase(): Promise<string> {
  * first harvest), refresh profiles, check media and `build`. A manual run stops there and prints
  * the run dir and the commands that come next. An unattended run (`auto`) refuses `pilot` and
  * `firstRun`, which want a human; it stops for review, writing `NEEDS_REVIEW` into the run and
- * returning exit code 2, when the build breached a guard or an earlier run is not fully
- * published; otherwise it signs, publishes to every relay and verifies. It throws when a relay
+ * returning exit code 2, when the build breached a guard. When an earlier run is not fully
+ * published it still syncs, sweeps, refreshes and checks media, but builds nothing (so
+ * unfinished runs never pile up) and returns exit code 2 with no run dir. Otherwise it signs,
+ * publishes to every relay and verifies. It throws when a relay
  * did not accept every event or relays and state disagree afterwards.
  */
 export async function runPipeline(
@@ -153,6 +155,15 @@ export async function runPipeline(
         (media.outage ? "; so many checks failed that the host looks down, so no failure was recorded" : ""),
     );
 
+    if (opts.auto && earlier.length > 0) {
+      // An earlier run is unfinished: state stays current, but no new run is built on top of it.
+      d.warn(
+        `stopped for review: not building a new run while ${plural(earlier.length, "earlier run")} ` +
+          "is not fully published; sign and publish it, or delete its folder under out/ to discard it",
+      );
+      return { runDir: null, stoppedForReview: true, breaches: [], exitCode: 2 };
+    }
+
     const built = await d.build(cfg, state, {
       pilot: opts.pilot,
       firstRun: opts.firstRun,
@@ -171,7 +182,7 @@ export async function runPipeline(
       return { runDir: built.runDir, stoppedForReview: false, breaches: built.breaches, exitCode: 0 };
     }
 
-    const reasons = [...built.breaches.map((b) => b.message), ...earlier];
+    const reasons = built.breaches.map((b) => b.message);
     if (reasons.length > 0) {
       writeFileSync(join(built.runDir, "NEEDS_REVIEW"), `${reasons.join("\n")}\n`);
       d.warn(`stopped for review: ${plural(reasons.length, "reason")}, listed in ${join(built.runDir, "NEEDS_REVIEW")}`);

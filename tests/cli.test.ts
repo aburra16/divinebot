@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +114,50 @@ describe("main", () => {
       else process.env.DIVINEBOT_CONFIG = prev;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the lock", () => {
+  let dir: string;
+  let prev: string | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "divinebot-cli-lock-"));
+    const base = JSON.parse(readFileSync("config.json", "utf8")) as Record<string, unknown>;
+    const file = join(dir, "config.json");
+    const statePath = join(dir, "state", "state.sqlite");
+    writeFileSync(file, JSON.stringify({ ...base, paths: { out: join(dir, "out"), state: statePath } }));
+    mkdirSync(join(dir, "state"));
+    writeFileSync(`${statePath}.lock`, `4242\n${new Date().toISOString()}\n`);
+    prev = process.env.DIVINEBOT_CONFIG;
+    process.env.DIVINEBOT_CONFIG = file;
+  });
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env.DIVINEBOT_CONFIG;
+    else process.env.DIVINEBOT_CONFIG = prev;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["sync"],
+    ["sweep"],
+    ["media"],
+    ["profiles"],
+    ["build"],
+    ["verify"],
+    ["sign", "run1"],
+    ["publish", "run1"],
+    ["run"],
+  ])("%s refuses while another run holds the lock", async (...argv) => {
+    expect(await main(argv)).toBe(1);
+    expect(err.join("\n")).toMatch(/another run holds the lock .*state\.sqlite\.lock/);
+    // The held lock is left alone.
+    expect(readFileSync(join(dir, "state", "state.sqlite.lock"), "utf8")).toContain("4242");
+  });
+
+  it("status does not need the lock", async () => {
+    expect(await main(["status"])).toBe(0);
   });
 });
 

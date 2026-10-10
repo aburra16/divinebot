@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NostrEvent } from "nostr-tools/core";
@@ -199,29 +199,24 @@ describe("runPipeline, auto", () => {
     expect(calls).toEqual(["sync", "profiles", "media", "build"]);
   });
 
-  it("stops for review when an earlier run is not fully published, and lists the warning", async () => {
+  it("with an earlier unfinished run, keeps state current but builds nothing, signs nothing and returns 2", async () => {
+    state.setCursor("videos", NOW - 100);
+    state.setCursor("last_sweep", NOW - 8 * DAY);
     const earlier = join(cfg.paths.out, "20260101T000000Z");
     writeManifest(earlier, cfg);
     writeFileSync(join(earlier, "unsigned.jsonl"), '{"kind":39999}\n');
     const out = await runPipeline(cfg, state, { auto: true, deps: deps() });
-    expect(out.exitCode).toBe(2);
-    expect(out.breaches).toEqual([]);
-    const text = readFileSync(join(out.runDir!, "NEEDS_REVIEW"), "utf8");
-    expect(text).toBe("warning: earlier run 20260101T000000Z is not fully published: not signed\n");
-    expect(calls).not.toContain("sign");
+    expect(out).toEqual({ runDir: null, stoppedForReview: true, breaches: [], exitCode: 2 });
+    expect(calls).toEqual(["sync", "sweep", "profiles", "media"]);
+    expect(readdirSync(cfg.paths.out)).toEqual(["20260101T000000Z"]);
+    expect(warnings.join("\n")).toContain("earlier run 20260101T000000Z is not fully published: not signed");
+    expect(warnings.join("\n")).toContain("delete its folder under out/");
   });
 
-  it("writes one line per breach and per warning", async () => {
-    const earlier = join(cfg.paths.out, "20260101T000000Z");
-    writeManifest(earlier, cfg);
-    writeFileSync(join(earlier, "unsigned.jsonl"), '{"kind":39999}\n');
+  it("writes NEEDS_REVIEW only for a run it built, one line per breach", async () => {
     const two = [breach, { ...breach, guard: "vanished", message: "40 videos vanished" }];
     const out = await runPipeline(cfg, state, { auto: true, deps: deps({ breaches: two }) });
-    const lines = readFileSync(join(out.runDir!, "NEEDS_REVIEW"), "utf8").trimEnd().split("\n");
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toBe(breach.message);
-    expect(lines[1]).toBe("40 videos vanished");
-    expect(lines[2]).toContain("earlier run 20260101T000000Z");
+    expect(readFileSync(join(out.runDir!, "NEEDS_REVIEW"), "utf8")).toBe(`${breach.message}\n40 videos vanished\n`);
   });
 
   it("signs, publishes to every relay and verifies, in that order, when nothing needs review", async () => {
@@ -367,6 +362,19 @@ describe("status", () => {
     expect(text).toContain("videos cursor: never");
     expect(text).toContain("no relay has had a run yet");
     expect(text).not.toContain("NEEDS_REVIEW");
+    expect(text).not.toContain("unfinished runs");
+  });
+
+  it("lists earlier unfinished runs, the real gate, and says how to clear them", () => {
+    const earlier = join(cfg.paths.out, "20260101T000000Z");
+    writeManifest(earlier, cfg);
+    writeFileSync(join(earlier, "unsigned.jsonl"), '{"kind":39999}\n');
+    writeFileSync(join(earlier, "NEEDS_REVIEW"), "x\n");
+    const text = status(cfg, state);
+    expect(text).toContain("unfinished runs");
+    expect(text).toContain("warning: earlier run 20260101T000000Z is not fully published: not signed");
+    expect(text).toContain("sign and publish the run you want to keep, or delete the run's folder under out/ to discard it");
+    expect(text).toContain("NEEDS_REVIEW is only a marker; deleting it unblocks nothing");
   });
 
   it("counts items, eligible sources by class, skips by reason, cursors, relays and review dirs", () => {
@@ -395,7 +403,7 @@ describe("status", () => {
     expect(text).toContain("videos cursor: 2027-01-15 08:00:00 UTC");
     expect(text).toContain("deletions cursor: never");
     expect(text).toMatch(/dcosl: run 20270102T000000Z, 1 accepted, 0 failed/);
-    expect(text).toMatch(/needs review: .*20270102T000000Z/);
-    expect(text).not.toMatch(/needs review: .*20270101T000000Z/);
+    expect(text).toMatch(/NEEDS_REVIEW.*: .*20270102T000000Z/);
+    expect(text).not.toMatch(/NEEDS_REVIEW.*: .*20270101T000000Z/);
   });
 });
