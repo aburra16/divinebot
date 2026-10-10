@@ -190,11 +190,19 @@ An automatic run that finds an unfinished earlier run still syncs, sweeps, refre
 
 ## Scheduling
 
-On Avi's Mac, launchd runs `scripts/launchd/run-divinebot.sh` daily at 06:00 local time. The script runs `npm run run -- --auto`, appends the output to `state/logs/<date>.log`, and on a non-zero exit shows a macOS notification that names the run directory to look at. It holds no secrets: the key comes from the key file.
+On Avi's Mac, launchd runs `scripts/launchd/run-divinebot.sh` daily at 06:00 local time. The script runs `npm run run -- --auto`, appends the output to `state/logs/<date>.log`, and on a non-zero exit shows a macOS notification that names the run directory to look at. It holds no secrets: the key comes from the key file. launchd's own output goes to `~/Library/Logs/divinebot.launchd.out.log` and `~/Library/Logs/divinebot.launchd.err.log`.
 
-Enable it only after the first native import is verified, and only after this check by hand.
+Enable it only after the first native import is verified, and only after the steps below, in order.
 
-**Check that the search relay takes deletions from the curator.** Every removal is a kind 5 sent to both relays. If search.brainstorm.world refuses kind 5 from the curator, each deletion of an item it holds fails there, the run stays unfinished, and every automatic run after it builds nothing and exits with status 2 until someone settles it. The check publishes one kind 5 that names an item that does not exist, so it deletes nothing. It is a public write, so do it on Avi's go:
+**1. Get the checkout out of `~/Documents`.** macOS privacy keeps launchd jobs out of `~/Documents`, `~/Desktop` and `~/Downloads`, and a job that runs there fails without any notification. Move the whole checkout, `state/` included (it is the only record of what was published), to a folder outside them. The plist example expects `~/divinebot`:
+
+```bash
+mv ~/Documents/Tapestry/divine-videos ~/divinebot
+```
+
+The other way is to give `/bin/bash` Full Disk Access in System Settings, Privacy and Security, Full Disk Access. That gives every bash script on the Mac that access, so moving the checkout is the better choice. If you keep the checkout where it is, change `/Users/YOU/divinebot` in the plist to its real path before installing it.
+
+**2. Check that the search relay takes deletions from the curator.** Every removal is a kind 5 sent to both relays. If search.brainstorm.world refuses kind 5 from the curator, each deletion of an item it holds fails there, the run stays unfinished, and every automatic run after it builds nothing and exits with status 2 until someone settles it. The check publishes one kind 5 that names an item that does not exist, so it deletes nothing. It is a public write, so do it on Avi's go:
 
 ```bash
 nak event --prompt-sec -k 5 -t k=39999 -t a=39999:6b279fb268a564ef74f35533f58a165fd4846b9c5595ac0bfc38cab37fda559d:divinebot-deletion-probe -c "" wss://search.brainstorm.world
@@ -202,15 +210,26 @@ nak event --prompt-sec -k 5 -t k=39999 -t a=39999:6b279fb268a564ef74f35533f58a16
 
 Paste the `nsec` at the prompt (for an `ncryptsec`, run it with `NOSTR_SECRET_KEY="$(cat ~/.config/divine-videos/curator.key)"` in front instead of `--prompt-sec`, and nak asks for the passphrase). nak prints whether the relay accepted it. If it was refused, do not enable the daily run: ask the relay's operators to accept kind 5 from the curator first.
 
+**3. Install the job**, from the checkout:
+
 ```bash
-mkdir -p state/logs
+mkdir -p state/logs ~/Library/Logs
 sed "s#/Users/YOU#$HOME#g" scripts/launchd/world.brainstorm.divinebot.plist.example > ~/Library/LaunchAgents/world.brainstorm.divinebot.plist
+plutil -lint ~/Library/LaunchAgents/world.brainstorm.divinebot.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/world.brainstorm.divinebot.plist
 ```
 
-To test it once without waiting for 06:00: `launchctl kickstart gui/$(id -u)/world.brainstorm.divinebot`. To disable it: `launchctl bootout gui/$(id -u)/world.brainstorm.divinebot`.
+An `ncryptsec` key needs `DIVINEBOT_PASSPHRASE_FILE` in the job's environment, and a key file anywhere but the default path needs `DIVINEBOT_KEY_FILE`. launchd does not read shell exports or expand `~`, so set them in the plist's `EnvironmentVariables` block, with absolute paths: delete the two comment lines around the block (the one that starts `<!-- EnvironmentVariables` and the one that ends `End of EnvironmentVariables. -->`) and the settings you do not need. An `nsec` key file with mode 600 at the default path needs nothing more.
 
-An `ncryptsec` key needs `DIVINEBOT_PASSPHRASE_FILE` in the job's environment, and a key file anywhere but the default path needs `DIVINEBOT_KEY_FILE`. launchd does not read shell exports or expand `~`, so set them in the commented `EnvironmentVariables` block of the plist, with absolute paths. An `nsec` key file with mode 600 at the default path needs nothing more.
+**4. Run it once now and check it worked.** This step is required, because a job that macOS blocks fails silently:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/world.brainstorm.divinebot
+```
+
+When it has finished, check that `state/logs/<today>.log` has a new `=== divinebot run started` section that ends with `exited 0` (or 2 with a reason you understand), that `npm run status` shows the run, and that `~/Library/Logs/divinebot.launchd.err.log` and `~/Library/Logs/divinebot.log` hold no new lines. A job macOS blocked shows up as a line like `/bin/bash: /Users/you/Documents/.../run-divinebot.sh: Operation not permitted` in `~/Library/Logs/divinebot.launchd.err.log`, with no new log under `state/logs` and no notification, because the script never started. If the script started but could not open the checkout, it writes a line to `~/Library/Logs/divinebot.log` and shows a "divinebot could not open its folder" notification. Either way, go back to step 1.
+
+To disable the job: `launchctl bootout gui/$(id -u)/world.brainstorm.divinebot`.
 
 ### Moving to a server
 

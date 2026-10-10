@@ -7,15 +7,22 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/YOU/Documents/Tapestry/divine-videos/scripts/launchd/run-divinebot.sh</string>
+    <string>/Users/YOU/divinebot/scripts/launchd/run-divinebot.sh</string>
   </array>
+  <!--
+    The checkout lives outside ~/Documents, ~/Desktop and ~/Downloads: macOS privacy keeps launchd
+    jobs out of those folders. launchd's own output goes to ~/Library/Logs for the same reason, so
+    an "Operation not permitted" from launchd can always be read.
+  -->
   <key>WorkingDirectory</key>
-  <string>/Users/YOU/Documents/Tapestry/divine-videos</string>
+  <string>/Users/YOU/divinebot</string>
   <!--
     launchd does not read your shell exports and does not expand ~ or $HOME, so any setting the job
-    needs goes here with absolute paths. Uncomment what you use:
-    DIVINEBOT_KEY_FILE when the key is not at ~/.config/divine-videos/curator.key, and
-    DIVINEBOT_PASSPHRASE_FILE when the key is an ncryptsec (the file must have mode 600).
+    needs goes in EnvironmentVariables below, with absolute paths. Set DIVINEBOT_KEY_FILE when the
+    key is not at ~/.config/divine-videos/curator.key, and DIVINEBOT_PASSPHRASE_FILE when the key is
+    an ncryptsec (the file must have mode 600). Delete the lines you do not need.
+  -->
+  <!-- EnvironmentVariables: remove this line and the closing line below to use it.
   <key>EnvironmentVariables</key>
   <dict>
     <key>DIVINEBOT_KEY_FILE</key>
@@ -23,7 +30,7 @@
     <key>DIVINEBOT_PASSPHRASE_FILE</key>
     <string>/Users/YOU/.config/divine-videos/curator.pass</string>
   </dict>
-  -->
+  End of EnvironmentVariables. -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
@@ -32,8 +39,8 @@
     <integer>0</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/YOU/Documents/Tapestry/divine-videos/state/logs/launchd.out.log</string>
+  <string>/Users/YOU/Library/Logs/divinebot.launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/YOU/Documents/Tapestry/divine-videos/state/logs/launchd.err.log</string>
+  <string>/Users/YOU/Library/Logs/divinebot.launchd.err.log</string>
 </dict>
 </plist>

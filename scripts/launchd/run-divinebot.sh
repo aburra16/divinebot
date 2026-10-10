@@ -6,8 +6,22 @@
 
 set -u
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$REPO" || exit 1
+# The repo is two folders above this script.
+SRC="${BASH_SOURCE[0]:-}"
+REPO=""
+if [ -n "$SRC" ]; then
+  REPO="$(cd "$(dirname "$SRC")/../.." 2>/dev/null && pwd)"
+fi
+if [ -z "$REPO" ] || ! cd "$REPO" 2>/dev/null; then
+  # Most likely macOS privacy: a launchd job may not open ~/Documents, ~/Desktop or ~/Downloads.
+  # Nothing under the repo can be written, so leave a line where it can be found.
+  FALLBACK="$HOME/Library/Logs/divinebot.log"
+  mkdir -p "$HOME/Library/Logs"
+  WHY="divinebot could not open its folder (two levels above ${SRC:-this script})."
+  echo "$(date '+%Y-%m-%d %H:%M:%S %z') $WHY Move the checkout out of ~/Documents, or give /bin/bash Full Disk Access." >> "$FALLBACK"
+  osascript -e "display notification \"$WHY See $FALLBACK\" with title \"divinebot\"" || true
+  exit 1
+fi
 
 # launchd starts jobs with a minimal PATH. Add the usual places node and npm live.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
