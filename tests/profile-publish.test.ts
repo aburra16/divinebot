@@ -219,6 +219,7 @@ describe("default fetchCurrent", () => {
     });
 
   it("asks each relay for the curator's kind 0 and keeps the newest", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const filters: Record<string, unknown>[][] = [];
     const older = await stub(acceptAll, (f, ctx) => {
       filters.push(f);
@@ -238,6 +239,7 @@ describe("default fetchCurrent", () => {
   });
 
   it("skips a relay that cannot be reached and merges onto what the others hold", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const a = await reqStub([kind0({ picture: "kept.png" })]);
     const publishTo = await stub();
     // publishTo never answers a REQ, so the read of it waits out the (short) timeout.
@@ -250,14 +252,37 @@ describe("default fetchCurrent", () => {
     expect(JSON.parse(publishTo.received[0]!.content)).toEqual({ ...EXAMPLE, picture: "kept.png" });
   });
 
-  it("says so and proceeds with no existing profile when no relay answers", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("refuses, naming the relays and sending nothing, when no relay can be read", async () => {
     const publishTo = await stub();
-    // The relay that takes the publish never answers a REQ, so the read times out.
+    // publishTo never answers a REQ, so the read of it times out; REFUSED cannot connect.
     const cfg = { ...config([REFUSED, publishTo.url]), publish: { eventsPerSecond: 1000, okTimeoutMs: 300 } };
-    const { results } = await profilePublish(cfg, profilePath, { keyPath, askPassphrase: noPassphrase, now: () => T });
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("No profile relay could be read"));
-    expect(JSON.parse(publishTo.received[0]!.content)).toEqual(EXAMPLE);
-    expect(results[publishTo.url]!.ok).toBe(true);
+    const message = await failure(() =>
+      profilePublish(cfg, profilePath, { keyPath, askPassphrase: noPassphrase, now: () => T }),
+    );
+    expect(message).toContain("No profile relay could be read");
+    expect(message).toContain(REFUSED);
+    expect(message).toContain(publishTo.url);
+    expect(message).toContain("nothing was published");
+    expect(publishTo.received).toHaveLength(0);
+  });
+
+  it("publishes profile.json alone when the relays answer but hold no profile", async () => {
+    const empty = await reqStub([]);
+    const { results } = await profilePublish(config([empty.url]), profilePath, {
+      keyPath,
+      askPassphrase: noPassphrase,
+      now: () => T,
+    });
+    expect(JSON.parse(empty.received[0]!.content)).toEqual(EXAMPLE);
+    expect(results[empty.url]!.ok).toBe(true);
+  });
+
+  it("names each relay it skipped when others answered", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const a = await reqStub([kind0({ picture: "p.png" })]);
+    const got = await readCurrentProfile(2_000)([REFUSED, a.url], pubkey);
+    expect(JSON.parse(got!.content)).toEqual({ picture: "p.png" });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(REFUSED));
   });
 });

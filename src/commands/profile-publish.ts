@@ -70,14 +70,16 @@ function parseContent(ev: NostrEvent | null): Fields {
 }
 
 /**
- * The newest kind 0 by `pubkey` on any of `relays`. A relay that cannot be read is skipped; when
- * none can, there is no existing profile to merge onto, and the console says so before the
- * profile is published on its own.
+ * The newest kind 0 by `pubkey` on any of `relays`, or null when the relays that answered hold
+ * none (a fresh account). A relay that cannot be read is skipped, and named on the console when
+ * others answered. When none can be read this throws: a kind 0 replaces the whole profile, so
+ * publishing without having seen the current one could erase fields set elsewhere.
  */
 export function readCurrentProfile(timeoutMs: number) {
   return async (relays: string[], pubkey: string): Promise<NostrEvent | null> => {
     let best: NostrEvent | null = null;
     let answered = 0;
+    const skipped: { url: string; reason: string }[] = [];
     await Promise.all(
       relays.map(async (url) => {
         try {
@@ -91,13 +93,19 @@ export function readCurrentProfile(timeoutMs: number) {
           } finally {
             relay.close();
           }
-        } catch {
-          // This relay is skipped; the others may still hold the profile.
+        } catch (err) {
+          skipped.push({ url, reason: err instanceof Error ? err.message : String(err) });
         }
       }),
     );
     if (answered === 0) {
-      console.warn("No profile relay could be read, so there is no existing profile to merge onto.");
+      throw new Error(
+        `No profile relay could be read (${relays.join(", ")}), so nothing was published: ` +
+          "publishing now could overwrite profile fields set elsewhere. Try again when a relay answers.",
+      );
+    }
+    for (const { url, reason } of skipped) {
+      console.warn(`Could not read the current profile from ${url} (${reason}); using the relays that answered.`);
     }
     return best;
   };
@@ -122,7 +130,8 @@ async function sendTo(url: string, ev: NostrEvent, timeoutMs: number): Promise<{
  *
  * `profilePath` is checked first (an object with a non-empty `name` and `about` and `bot: true`),
  * then the key is loaded and must derive `cfg.curatorPubkey`, both before anything touches the
- * network. The content is the newest existing profile from `cfg.profileRelays` with every field
+ * network. The current profile must be readable from at least one profile relay (an answer
+ * with no kind 0 is fine; no answer at all refuses, as a kind 0 replaces the whole profile). The content is the newest existing profile from `cfg.profileRelays` with every field
  * of `profilePath` laid over it, so fields that only the existing profile has (a picture, say)
  * are kept. The event goes to every profile relay in parallel; one relay failing does not stop
  * the others. The key is zeroed as soon as the event is signed.
