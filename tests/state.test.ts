@@ -439,6 +439,38 @@ describe("sources", () => {
     state.touchSources([], 99);
   });
 
+  it("sourceAddresses lists addresses only, filtered and sorted", () => {
+    state.upsertSource(source({ d: "v2" }), "native", null, 1);
+    state.upsertSource(source({ d: "v1" }), "native", null, 1);
+    state.upsertSource(source({ d: "v3" }), "vine", "classic-vine", 1);
+    state.setSourceStatus(`${PK}:v2`, "deleted", 2);
+
+    expect(state.sourceAddresses()).toEqual([`${PK}:v1`, `${PK}:v2`, `${PK}:v3`]);
+    expect(state.sourceAddresses({ status: "active", class: "native" })).toEqual([`${PK}:v1`]);
+  });
+
+  it("transaction commits every write together and rolls all back when the function throws", () => {
+    const n = state.transaction(() => {
+      state.upsertSource(source({ d: "v1" }), "native", null, 1);
+      state.upsertSource(source({ d: "v2" }), "native", null, 1);
+      state.setCursor("videos", 5);
+      return 2;
+    });
+    expect(n).toBe(2);
+    expect(state.sourceAddresses()).toHaveLength(2);
+    expect(state.cursor("videos")).toBe(5);
+
+    expect(() =>
+      state.transaction(() => {
+        state.upsertSource(source({ d: "v3" }), "native", null, 1);
+        state.setCursor("videos", 9);
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+    expect(state.source(`${PK}:v3`)).toBeUndefined();
+    expect(state.cursor("videos")).toBe(5);
+  });
+
   it("rejects an unknown class or status in the table", () => {
     const path = join(mkdtempSync(join(tmpdir(), "divinebot-state-")), "s.sqlite");
     openState(path).close();

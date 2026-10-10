@@ -72,6 +72,10 @@ export interface State {
   sources(filter?: { status?: SourceStatus; class?: SourceClass; eligibleOnly?: boolean }): SourceRow[];
   /** Marks sources as seen without rewriting them; a vanished one seen again becomes active. */
   touchSources(addresses: string[], seenAt: number): void;
+  /** The address of every source matching the filter, sorted. Unlike `sources`, it does not load the events. */
+  sourceAddresses(filter?: { status?: SourceStatus; class?: SourceClass }): string[];
+  /** Runs `fn` in one SQLite transaction: all of its writes commit together, or none do if it throws. Nests. */
+  transaction<T>(fn: () => T): T;
 
   profile(pubkey: string): { content: Record<string, unknown>; createdAt: number; fetchedAt: number } | undefined;
   putProfile(pubkey: string, content: Record<string, unknown>, createdAt: number, fetchedAt: number): void;
@@ -377,6 +381,23 @@ export function openState(path: string): State {
     },
     touchSources(addresses, seenAt) {
       touchSourcesTx(addresses, seenAt);
+    },
+    sourceAddresses(filter = {}) {
+      const where: string[] = [];
+      const params: string[] = [];
+      if (filter.status) {
+        where.push("status = ?");
+        params.push(filter.status);
+      }
+      if (filter.class) {
+        where.push("class = ?");
+        params.push(filter.class);
+      }
+      const sql = `SELECT address FROM sources${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY address`;
+      return (db.prepare(sql).all(...params) as { address: string }[]).map((row) => row.address);
+    },
+    transaction<T>(fn: () => T): T {
+      return db.transaction(fn)();
     },
 
     profile(pubkey) {
