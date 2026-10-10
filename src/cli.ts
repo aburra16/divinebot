@@ -217,14 +217,17 @@ const commands = new Map<string, Command>([
 
 const USAGE = `usage: npm run <${[...commands.keys()].join("|")}> -- [options]`;
 
-/** Runs one command for `argv` and returns the process exit code: 0, 1 for an error, 2 for a bad command or a run that needs review. */
+/**
+ * Runs one command for `argv` and returns the process exit code: 0, 1 for an error (a bad command
+ * or bad options included), and 2 only for a run that stopped for review.
+ */
 export async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
   const command = name === undefined ? undefined : commands.get(name);
   if (command === undefined) {
     console.error(name === undefined ? "no command given" : `unknown command: ${name}`);
     console.error(USAGE);
-    return 2;
+    return 1;
   }
   try {
     return (await command(parseArgs(rest))) ?? 0;

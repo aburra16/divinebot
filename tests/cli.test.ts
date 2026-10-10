@@ -23,7 +23,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("main", () => {
   it("refuses an unknown command and lists the known ones", async () => {
-    expect(await main(["frobnicate"])).toBe(2);
+    expect(await main(["frobnicate"])).toBe(1);
     expect(err.join("\n")).toContain("unknown command: frobnicate");
     const usage = err.join("\n");
     for (const name of ["sync", "sweep", "media", "profiles", "build", "sign", "publish", "verify", "rebroadcast", "profile:publish", "run", "status"]) {
@@ -32,7 +32,7 @@ describe("main", () => {
   });
 
   it("refuses no command", async () => {
-    expect(await main([])).toBe(2);
+    expect(await main([])).toBe(1);
     expect(err.join("\n")).toContain("no command given");
   });
 
@@ -216,6 +216,7 @@ describe("the entry point", () => {
     expect(res.status).toBe(1);
     expect(res.stderr).toContain("build does not take --auto");
     const unknown = spawnSync("node_modules/.bin/tsx", ["src/cli.ts", "nope"], { encoding: "utf8" });
-    expect(unknown.status).toBe(2);
+    // Exit 2 means only "stopped for review"; a usage error is 1.
+    expect(unknown.status).toBe(1);
   });
 });
