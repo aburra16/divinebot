@@ -72,13 +72,15 @@ describe("videoUrl", () => {
 });
 
 describe("thumbnailUrl", () => {
-  it("returns imeta image exactly as written when it parses as https, else undefined", () => {
+  it("returns imeta image exactly as written when it parses as https and has no surrounding whitespace, else undefined", () => {
     expect(thumbnailUrl(source(1))).toBe(turl(1));
     expect(thumbnailUrl(source(1, { image: null }))).toBeUndefined();
     for (const bad of ["http://x.test/a.jpg", "https://", "https://exa mple.com/a.jpg", "\u00a0https://x.test/a.jpg", "\ufeffhttps://x.test/a.jpg"]) {
       expect(thumbnailUrl(source(1, { image: bad }))).toBeUndefined();
     }
-    expect(thumbnailUrl(source(1, { image: "  https://x.test/a.jpg  " }))).toBe("  https://x.test/a.jpg  ");
+    for (const padded of ["  https://x.test/a.jpg  ", " https://x.test/a.jpg", "https://x.test/a.jpg ", "https://x.test/a.jpg\t"]) {
+      expect(thumbnailUrl(source(1, { image: padded })), JSON.stringify(padded)).toBeUndefined();
+    }
   });
 });
 
@@ -177,15 +179,15 @@ describe("runMediaChecks: what gets checked", () => {
     expect(calls.map((c) => c.url).sort()).toEqual([vurl(1), vurl(2)].sort());
   });
 
-  it("checks an ASCII-padded https image under exactly the string thumbnailUrl gives", async () => {
+  it("does not check an ASCII-padded image: it is no thumbnail, so only the video is checked", async () => {
     const padded = "  https://media.divine.video/thumb-1  ";
     const ev = source(1, { image: padded });
-    expect(thumbnailUrl(ev)).toBe(padded);
+    expect(thumbnailUrl(ev)).toBeUndefined();
     addSource(state, ev);
     const { f, calls } = fakeFetch(ok);
     await runMediaChecks(cfg, state, { now: () => NOW, fetch: f, sleep: noSleep });
-    expect(calls.map((c) => c.url)).toContain(padded);
-    expect(state.media(padded)?.status).toBe("pass");
+    expect(calls.map((c) => c.url)).toEqual([vurl(1)]);
+    expect(state.media(padded)).toBeUndefined();
   });
 
   it("does not check a URL that already has a media row, however old", async () => {

@@ -77,14 +77,15 @@ function isHttps(value: string | undefined): value is string {
 }
 
 /**
- * The thumbnail of a source event: its `imeta` `image` exactly as written, when that string parses
- * as an https URL, else undefined. The one definition of a thumbnail: the media checks check this
- * string, build requires a pass row for this string, and the item writes this string. Nothing is
- * trimmed or normalized, so the three can never disagree.
+ * The thumbnail of a source event: its `imeta` `image` exactly as written, when that string starts
+ * with `https://`, parses as a URL and has no whitespace around it, else undefined. The one
+ * definition of a thumbnail: the media checks check this string, build requires a pass row for
+ * this string, and the item writes this string. Nothing is trimmed or normalized (a padded value
+ * is no thumbnail), so the three can never disagree and a written thumbnail starts with https://.
  */
 export function thumbnailUrl(ev: NostrEvent): string | undefined {
   const image = imeta(ev)?.image;
-  return isHttps(image) ? image : undefined;
+  return isHttps(image) && image.startsWith("https://") && image === image.trim() ? image : undefined;
 }
 
 /**

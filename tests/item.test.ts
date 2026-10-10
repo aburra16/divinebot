@@ -89,7 +89,7 @@ describe("buildItem fallbacks", () => {
     }
   });
 
-  it("writes no thumbnail for an image led by U+00A0 or U+FEFF, and an ASCII-padded one exactly as thumbnailUrl gives it", () => {
+  it("writes no thumbnail for an image led by U+00A0 or U+FEFF or padded with ASCII whitespace", () => {
     const withImage = (image: string) =>
       withTags(native, (tags) =>
         tags.map((t) => (t[0] === "imeta" ? t.map((e) => (e.startsWith("image ") ? `image ${image}` : e)) : t)),
@@ -98,8 +98,10 @@ describe("buildItem fallbacks", () => {
       expect(tagValue(buildItem(withImage(bad), ctx), "thumbnail")).toBeUndefined();
     }
     const padded = withImage("  https://example.com/a.jpg  ");
-    expect(thumbnailUrl(padded)).toBe("  https://example.com/a.jpg  ");
-    expect(tagValue(buildItem(padded, ctx), "thumbnail")).toBe(thumbnailUrl(padded));
+    expect(thumbnailUrl(padded)).toBeUndefined();
+    expect(tagValue(buildItem(padded, ctx), "thumbnail")).toBeUndefined();
+    // A thumbnail that is written always starts with https://.
+    expect(tagValue(buildItem(withImage("https://example.com/a.jpg"), ctx), "thumbnail")).toBe("https://example.com/a.jpg");
   });
 
   it("publishes the created_at date when published_at is missing", () => {

@@ -288,7 +288,7 @@ describe("build", () => {
     for (const item of lines(result.runDir)) expect(tag(item.tags, "thumbnail")).toBeUndefined();
   });
 
-  it("needs and writes the thumbnail only as thumbnailUrl gives it: U+00A0 and U+FEFF images are none, a padded one is exact", async () => {
+  it("needs and writes the thumbnail only as thumbnailUrl gives it: U+00A0, U+FEFF and padded images are none", async () => {
     const ev = eligible[0]!;
     const make = (image: string, i: number): NostrEvent => ({
       ...ev,
@@ -302,18 +302,13 @@ describe("build", () => {
     seed([nbsp, bom, padded]);
     state.putMedia(videoUrl(imeta(ev)!.x!, cfg.media.base), "pass", 200, "video/mp4", NOW);
 
-    // Video row alone: the first two are built without a thumbnail; the padded one waits for its thumbnail row.
+    // Video row alone: all three are built without a thumbnail.
+    expect(thumbnailUrl(padded)).toBeUndefined();
     const first = await run({ runId: "r1" });
     expect(lines(first.runDir).map((e) => [tag(e.tags, "d"), tag(e.tags, "thumbnail")])).toEqual(
-      [itemD(nbsp), itemD(bom)].sort().map((d) => [d, undefined]),
+      [itemD(nbsp), itemD(bom), itemD(padded)].sort().map((d) => [d, undefined]),
     );
-    expect(first.skipped["media-pending"]).toBe(1);
-
-    // A pass row under the exact padded string builds it, writing that same string.
-    state.putMedia(thumbnailUrl(padded)!, "pass", 200, "image/jpeg", NOW);
-    const second = await run({ runId: "r2" });
-    const item = lines(second.runDir).find((e) => tag(e.tags, "d") === itemD(padded))!;
-    expect(tag(item.tags, "thumbnail")).toBe("  https://example.com/c.jpg  ");
+    expect(first.skipped["media-pending"]).toBeUndefined();
   });
 
   it("holds a video whose media checks are pending: not built new, and a live item is kept as it is", async () => {
