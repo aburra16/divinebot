@@ -12,7 +12,7 @@
   "headerRelay": "dcosl",
   "source": {
     "relay": "wss://relay.divine.video",
-    "pageSize": 5000,
+    "pageSize": 1000,
     "pageDelayMs": 1000,
     "harvestSince": 1735689600,
     "overlapSeconds": 3600,

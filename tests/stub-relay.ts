@@ -9,6 +9,8 @@ export interface StubRelay {
   received: NostrEvent[];
   /** How many clients connected. */
   connections: number;
+  /** Resets every connected client's socket, as a relay does when it drops a long stream. */
+  terminateClients(): void;
   close(): Promise<void>;
 }
 
@@ -45,6 +47,9 @@ export async function startStubRelay(
     url: `ws://127.0.0.1:${port}`,
     received: [],
     connections: 0,
+    terminateClients: () => {
+      for (const client of wss.clients) client.terminate();
+    },
     close: async () => {
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve, reject) => wss.close((err) => (err ? reject(err) : resolve())));

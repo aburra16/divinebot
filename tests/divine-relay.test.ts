@@ -57,6 +57,7 @@ describe("streamEvents", () => {
     pageDelayMs: 1000,
     readTimeoutMs: 2000,
     sleep: noSleep,
+    onRetry: () => {},
     ...extra,
   });
 
@@ -229,7 +230,7 @@ describe("streamEvents", () => {
     const url = stub.url;
     let calls = 0;
     await expect(
-      streamEvents(url, {}, opts(), () => {
+      streamEvents(url, {}, opts({ maxRetries: 0 }), () => {
         calls++;
       }),
     ).rejects.toThrow(url);
@@ -247,7 +248,7 @@ describe("streamEvents", () => {
     );
     const url = stub.url;
     await expect(
-      streamEvents(url, {}, opts(), async () => {
+      streamEvents(url, {}, opts({ maxRetries: 0 }), async () => {
         await dropStub();
         await new Promise((r) => setTimeout(r, 50));
       }),
@@ -258,13 +259,13 @@ describe("streamEvents", () => {
     const dead = await startStubRelay(() => {});
     const url = dead.url;
     await dead.close();
-    await expect(streamEvents(url, {}, opts(), () => {})).rejects.toThrow(url);
+    await expect(streamEvents(url, {}, opts({ maxRetries: 0 }), () => {})).rejects.toThrow(url);
   });
 
   it("rejects naming the relay when no EOSE arrives within readTimeoutMs", async () => {
     stub = await startStubRelay(() => {}, () => {});
     const url = stub.url;
-    await expect(streamEvents(url, {}, opts({ readTimeoutMs: 100 }), () => {})).rejects.toThrow(url);
+    await expect(streamEvents(url, {}, opts({ readTimeoutMs: 100, maxRetries: 0 }), () => {})).rejects.toThrow(url);
   });
 
   it("rejects when onPage throws, and closes the socket", async () => {
@@ -277,6 +278,179 @@ describe("streamEvents", () => {
     await new Promise((r) => setTimeout(r, 50));
     // A second read on the same stub shows the failed one left nothing behind.
     await expect(streamEvents(url, {}, opts(), () => {})).resolves.toMatchObject({ events: 12 });
+  });
+
+  describe("retries a dropped page", () => {
+    it("reconnects after a mid-page drop and delivers every event exactly once", async () => {
+      const events = twelve();
+      let reqs = 0;
+      stub = await startStubRelay(
+        () => {},
+        (filters, ctx) => {
+          reqs++;
+          const page = answer(events, filters[0]!);
+          if (reqs === 2) {
+            // The second REQ is the second page: send part of it, then reset the socket.
+            for (const ev of page.slice(0, 1)) ctx.send(ev);
+            setTimeout(() => stub!.terminateClients(), 20);
+            return;
+          }
+          for (const ev of page) ctx.send(ev);
+          ctx.eose();
+        },
+      );
+      const delivered: NostrEvent[] = [];
+      const retries: [number, string][] = [];
+      const sleeps: number[] = [];
+      const result = await streamEvents(
+        stub.url,
+        {},
+        opts({
+          onRetry: (attempt, why) => void retries.push([attempt, why]),
+          sleep: async (ms) => void sleeps.push(ms),
+        }),
+        (page) => {
+          delivered.push(...page);
+        },
+      );
+      const ids = delivered.map((e) => e.id);
+      expect(ids).toHaveLength(12);
+      expect(new Set(ids)).toEqual(new Set(events.map((e) => e.id)));
+      expect(result.events).toBe(12);
+      expect(retries).toHaveLength(1);
+      expect(retries[0]![0]).toBe(1);
+      expect(retries[0]![1]).toMatch(/dropped the connection/);
+      expect(stub.connections).toBe(2);
+      // One backoff for the retry, then the usual page delays.
+      expect(sleeps).toContain(2000);
+    });
+
+    it("rejects after five attempts when the relay always drops, backing off between them", async () => {
+      stub = await startStubRelay(
+        () => {},
+        () => {
+          setTimeout(() => stub?.terminateClients(), 5);
+        },
+      );
+      const url = stub.url;
+      const retries: number[] = [];
+      const sleeps: number[] = [];
+      await expect(
+        streamEvents(
+          url,
+          {},
+          opts({
+            onRetry: (attempt) => void retries.push(attempt),
+            sleep: async (ms) => void sleeps.push(ms),
+          }),
+          () => {},
+        ),
+      ).rejects.toThrow(url);
+      expect(stub.connections).toBe(5);
+      expect(retries).toEqual([1, 2, 3, 4]);
+      expect(sleeps).toEqual([2000, 5000, 15000, 30000]);
+    });
+
+    it("retries a connect failure with the same budget and rejects when it never opens", async () => {
+      const dead = await startStubRelay(() => {});
+      const url = dead.url;
+      await dead.close();
+      const retries: number[] = [];
+      await expect(
+        streamEvents(url, {}, opts({ onRetry: (attempt) => void retries.push(attempt) }), () => {}),
+      ).rejects.toThrow(url);
+      expect(retries).toEqual([1, 2, 3, 4]);
+    });
+
+    it("does not retry when the relay answers CLOSED", async () => {
+      let reqs = 0;
+      stub = await startStubRelay(
+        () => {},
+        (_filters, ctx) => {
+          reqs++;
+          ctx.closed("rate-limited: slow down");
+        },
+      );
+      const retries: number[] = [];
+      await expect(
+        streamEvents(stub.url, {}, opts({ onRetry: (attempt) => void retries.push(attempt) }), () => {}),
+      ).rejects.toThrow(/rate-limited: slow down/);
+      expect(reqs).toBe(1);
+      expect(retries).toEqual([]);
+    });
+
+    it("retries a silence timeout and resolves when the next attempt is answered", async () => {
+      const events = twelve();
+      let reqs = 0;
+      stub = await startStubRelay(
+        () => {},
+        (filters, ctx) => {
+          reqs++;
+          if (reqs === 1) return; // never answered
+          for (const ev of answer(events, filters[0]!)) ctx.send(ev);
+          ctx.eose();
+        },
+      );
+      const retries: string[] = [];
+      const result = await streamEvents(
+        stub.url,
+        {},
+        opts({ readTimeoutMs: 100, onRetry: (_a, why) => void retries.push(why) }),
+        () => {},
+      );
+      expect(result.events).toBe(12);
+      expect(retries).toHaveLength(1);
+      expect(retries[0]).toMatch(/did not finish the read/);
+    });
+
+    it("never moves past unread events: a page that keeps dropping delivers nothing from it", async () => {
+      const events = twelve();
+      stub = await startStubRelay(
+        () => {},
+        (filters, ctx) => {
+          if (filters[0]!.until !== undefined) {
+            ctx.send(answer(events, filters[0]!)[0]!);
+            setTimeout(() => stub?.terminateClients(), 5);
+            return;
+          }
+          for (const ev of answer(events, filters[0]!)) ctx.send(ev);
+          ctx.eose();
+        },
+      );
+      const delivered: NostrEvent[] = [];
+      await expect(
+        streamEvents(stub.url, {}, opts({ maxRetries: 2 }), (page) => {
+          delivered.push(...page);
+        }),
+      ).rejects.toThrow(/dropped the connection/);
+      expect(delivered).toHaveLength(5);
+    });
+
+    it("uses the default writer on stderr when onRetry is not given", async () => {
+      const writes: string[] = [];
+      const orig = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        let reqs = 0;
+        stub = await startStubRelay(
+          () => {},
+          (filters, ctx) => {
+            reqs++;
+            if (reqs === 1) return;
+            for (const ev of answer(twelve(), filters[0]!)) ctx.send(ev);
+            ctx.eose();
+          },
+        );
+        const { onRetry: _drop, ...bare } = opts({ readTimeoutMs: 100 });
+        await streamEvents(stub.url, {}, bare, () => {});
+      } finally {
+        process.stderr.write = orig;
+      }
+      expect(writes.join("")).toMatch(/retry 1 of 4/);
+    });
   });
 
   it("rejects a pageSize that is not a positive integer", async () => {

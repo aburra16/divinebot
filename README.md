@@ -6,7 +6,7 @@ divinebot fills a nostr DList called "Divine Videos" with the native videos post
 
 - The videos belong to their creators. The list points at Divine's media and Divine's pages and copies public event metadata only (title, caption, creator name, dates and similar). It copies no video or image.
 - This project is not affiliated with Divine.
-- The bot reads Divine's public relay (`wss://relay.divine.video`) within the limits that relay publishes, politely: pages of at most 5,000 events, at least one second apart, one connection at a time, at most 5 media checks per second, and at most 5 NIP-05 lookups per second. It never uses Divine's REST API.
+- The bot reads Divine's public relay (`wss://relay.divine.video`) within the limits that relay publishes, politely: pages of at most 5,000 events (1,000 by default, so a dropped connection costs little to re-read), at least one second apart, one connection at a time, at most 5 media checks per second, and at most 5 NIP-05 lookups per second. It never uses Divine's REST API.
 - Classic Vines (the restored Vine archive) are out of scope for now. They stay behind the `scope.includeVines` switch in `config.json`, which is off.
 - The code is MIT; see `LICENSE`. Fetched data, state and built output (`data/`, `state/`, `out/`) are not committed.
 

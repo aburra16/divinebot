@@ -8,6 +8,11 @@ import WebSocket from "ws";
  * used: `nak req` and library clients hang on this relay while a plain WebSocket works, so
  * this speaks NIP-01 directly. One connection, one REQ per page, each closed at EOSE.
  *
+ * Resilience: Divine's relay sometimes resets a long, large stream mid-page. A page that fails
+ * because the connection dropped (or was silent, or never opened) is read again on a fresh
+ * connection, up to `maxRetries` more times with backoff. `CLOSED` is an explicit refusal and
+ * is never retried. Once the budget is spent the read rejects, so nothing is skipped.
+ *
  * Memory: a native event averages 22 KB and a first harvest is about 1.1 GB. Only the page in
  * flight is held. It is handed to `onPage` and dropped; across pages only event ids are kept.
  */
@@ -20,7 +25,18 @@ export interface PageOptions {
   /** Longest the relay may stay silent (connecting, or between messages of a page). */
   readTimeoutMs: number;
   sleep?: (ms: number) => Promise<void>;
+  /** Extra attempts for a page whose connection dropped, went silent or would not open. Default 4. */
+  maxRetries?: number;
+  /** Told before each retry; `attempt` counts from 1. Default writes a plain line to stderr. */
+  onRetry?: (attempt: number, reason: string) => void;
 }
+
+/** Waits before retry 1, 2, 3 and 4 of one page; a longer budget reuses the last value. */
+const RETRY_BACKOFF_MS = [2000, 5000, 15000, 30000];
+const DEFAULT_MAX_RETRIES = 4;
+
+/** A failure of the connection rather than a refusal by the relay, so a retry may succeed. */
+class TransientReadError extends Error {}
 
 export interface StreamResult {
   /** REQs answered, counting the last one, which only repeated events already seen. */
@@ -33,6 +49,10 @@ export interface StreamResult {
   stalledAt?: number;
 }
 
+const defaultOnRetry = (attempt: number, why: string) => {
+  process.stderr.write(`divine relay: retry ${attempt} of ${DEFAULT_MAX_RETRIES}: ${why}\n`);
+};
+
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Opens a socket, or rejects with a message naming the relay. */
@@ -42,14 +62,14 @@ function connect(url: string, timeoutMs: number): Promise<WebSocket> {
     try {
       ws = new WebSocket(url, { handshakeTimeout: timeoutMs });
     } catch (err) {
-      reject(new Error(`cannot connect to ${url} (${reason(err)})`));
+      reject(new TransientReadError(`cannot connect to ${url} (${reason(err)})`));
       return;
     }
     const fail = (err: unknown) => {
       ws.removeAllListeners("open");
       // A socket that fails later must not raise an unhandled 'error'; reads listen for it.
       ws.on("error", () => {});
-      reject(new Error(`cannot connect to ${url} (${reason(err)})`));
+      reject(new TransientReadError(`cannot connect to ${url} (${reason(err)})`));
     };
     ws.once("open", () => {
       ws.removeListener("error", fail);
@@ -79,8 +99,9 @@ interface PageRead {
 
 /**
  * One REQ up to EOSE. Events are signature-checked as they arrive; `seen` (ids from every
- * page so far, forged ones too) is extended here so a repeat is neither delivered nor counted
- * twice. A forged event still moves `oldest`: an honest relay may hold a corrupt event, and
+ * completed page, forged ones too) is extended at EOSE so a repeat is neither delivered nor
+ * counted twice. A read that fails leaves `seen` untouched, so retrying the page re-delivers
+ * what the failed read had already received. A forged event still moves `oldest`: an honest relay may hold a corrupt event, and
  * leaving it out would make paging repeat the same page and stop short.
  */
 function readPage(
@@ -93,10 +114,11 @@ function readPage(
 ): Promise<PageRead> {
   return new Promise((resolve, reject) => {
     if (ws.readyState !== WebSocket.OPEN) {
-      reject(new Error(`${url} dropped the connection before the next page was requested`));
+      reject(new TransientReadError(`${url} dropped the connection before the next page was requested`));
       return;
     }
     const page: PageRead = { events: [], rejected: 0, received: 0 };
+    const pending = new Set<string>();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const done = (err?: Error) => {
       clearTimeout(timer);
@@ -104,6 +126,7 @@ function readPage(
       ws.removeListener("close", onClose);
       ws.removeListener("error", onError);
       if (err === undefined) {
+        for (const id of pending) seen.add(id);
         try {
           ws.send(JSON.stringify(["CLOSE", subId]));
         } catch {
@@ -114,11 +137,11 @@ function readPage(
         reject(err);
       }
     };
-    // Silence, not total time: a page of 5000 native events is over 100 MB and may take a while.
+    // Silence, not total time: a page of 5000 native events is over 100 MB (the default is 1000) and may take a while.
     const arm = () => {
       clearTimeout(timer);
       timer = setTimeout(
-        () => done(new Error(`${url} did not finish the read within ${timeoutMs / 1000} s`)),
+        () => done(new TransientReadError(`${url} did not finish the read within ${timeoutMs / 1000} s`)),
         timeoutMs,
       );
     };
@@ -126,8 +149,8 @@ function readPage(
       page.received++;
       const id = isObject(ev) && typeof ev.id === "string" ? ev.id : undefined;
       if (id !== undefined) {
-        if (seen.has(id)) return;
-        seen.add(id);
+        if (seen.has(id) || pending.has(id)) return;
+        pending.add(id);
       }
       const created = isObject(ev) ? ev.created_at : undefined;
       if (typeof created === "number" && Number.isFinite(created)) {
@@ -157,14 +180,14 @@ function readPage(
         done(new Error(`${url} closed the read before it finished: ${String(msg[2] ?? "")}`));
       }
     };
-    const onClose = () => done(new Error(`${url} dropped the connection during the read`));
-    const onError = (err: Error) => done(new Error(`${url} connection error: ${err.message}`));
+    const onClose = () => done(new TransientReadError(`${url} dropped the connection during the read`));
+    const onError = (err: Error) => done(new TransientReadError(`${url} connection error: ${err.message}`));
     ws.on("message", onMessage);
     ws.once("close", onClose);
     ws.once("error", onError);
     arm();
     ws.send(JSON.stringify(["REQ", subId, filter]), (err) => {
-      if (err) done(new Error(`${url} connection error: ${err.message}`));
+      if (err) done(new TransientReadError(`${url} connection error: ${err.message}`));
     });
   });
 }
@@ -179,8 +202,10 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
  * `stalledAt`. Paging by `until` cannot step past that second.
  *
  * Each page's new, verified events go to `onPage`, which is awaited before the next request.
- * Rejects, naming the relay, on CLOSED, a dropped socket or a silent relay; never resolves
- * with a partial read. The socket is closed either way.
+ * A page lost to a dropped, silent or unopenable connection is read again on a fresh socket,
+ * with the same filter and `until`, up to `maxRetries` times (backoff 2, 5, 15, 30 s); `onRetry`
+ * hears of each. Rejects, naming the relay, on CLOSED at once, or on a connection failure once
+ * the retries are spent; never resolves with a partial read. The socket is closed either way.
  */
 export async function streamEvents(
   url: string,
@@ -192,8 +217,24 @@ export async function streamEvents(
   if (!Number.isInteger(pageSize) || pageSize < 1) {
     throw new Error(`pageSize must be a positive integer, got ${pageSize}`);
   }
+  const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
+  if (!Number.isInteger(maxRetries) || maxRetries < 0) {
+    throw new Error(`maxRetries must be a non-negative integer, got ${maxRetries}`);
+  }
   const sleep = opts.sleep ?? defaultSleep;
-  const ws = await connect(url, readTimeoutMs);
+  const onRetry = opts.onRetry ?? defaultOnRetry;
+  let ws: WebSocket | undefined;
+  const closeSocket = () => {
+    if (ws === undefined) return;
+    ws.removeAllListeners("message");
+    ws.close();
+    ws = undefined;
+  };
+  /** One page on the current connection, opening one first when there is none. */
+  const attempt = async (subId: string, request: Filter, seen: Set<string>): Promise<PageRead> => {
+    ws ??= await connect(url, readTimeoutMs);
+    return readPage(ws, url, subId, request, readTimeoutMs, seen);
+  };
   try {
     const seen = new Set<string>();
     const result: StreamResult = { pages: 0, events: 0, rejected: 0 };
@@ -202,7 +243,18 @@ export async function streamEvents(
       if (result.pages > 0) await sleep(pageDelayMs);
       const subId = `divine-${result.pages + 1}`;
       const request: Filter = { ...filter, ...(until === undefined ? {} : { until }), limit: pageSize };
-      const page = await readPage(ws, url, subId, request, readTimeoutMs, seen);
+      let page: PageRead;
+      for (let tries = 0; ; tries++) {
+        try {
+          page = await attempt(subId, request, seen);
+          break;
+        } catch (err) {
+          closeSocket();
+          if (!(err instanceof TransientReadError) || tries >= maxRetries) throw err;
+          onRetry(tries + 1, reason(err));
+          await sleep(RETRY_BACKOFF_MS[Math.min(tries, RETRY_BACKOFF_MS.length - 1)]!);
+        }
+      }
       result.pages++;
       result.rejected += page.rejected;
       const fresh = page.events.length + page.rejected;
@@ -215,7 +267,6 @@ export async function streamEvents(
       if (page.events.length > 0) await onPage(page.events);
     }
   } finally {
-    ws.removeAllListeners("message");
-    ws.close();
+    closeSocket();
   }
 }
