@@ -28,11 +28,13 @@ export function creatorName(content: ProfileContent | undefined): string | undef
 }
 
 /**
- * Splits `local@domain` into its parts, lowercased, or returns undefined for anything that is not a
- * plain host name: no port, path, query, IP address or other oddity ever reaches a request.
+ * Splits `local@domain` into its parts, lowercased (`id` is the normalized form, the cache key;
+ * `original` is the trimmed text as written), or returns undefined for anything that is not a plain
+ * host name: no port, path, query, IP address or other oddity ever reaches a request.
  */
-function parseIdentifier(identifier: string): { local: string; domain: string; id: string } | undefined {
-  const parts = identifier.trim().split("@");
+function parseIdentifier(identifier: string): { local: string; domain: string; id: string; original: string } | undefined {
+  const original = identifier.trim();
+  const parts = original.split("@");
   if (parts.length !== 2) return undefined;
   const local = parts[0]!.toLowerCase();
   const rawDomain = parts[1]!.toLowerCase();
@@ -43,11 +45,11 @@ function parseIdentifier(identifier: string): { local: string; domain: string; i
   if (!labels.every((l) => l.length <= 63 && LABEL_RE.test(l))) return undefined;
   // A top-level label is never all digits, so this also keeps out IPv4 addresses.
   if (/^[0-9]+$/.test(labels[labels.length - 1]!)) return undefined;
-  return { local, domain, id: `${local}@${domain}` };
+  return { local, domain, id: `${local}@${domain}`, original };
 }
 
-async function readLimited(res: Response, limit: number): Promise<string | null> {
-  if (res.body === null) return null;
+async function readLimited(res: Response, limit: number): Promise<string | "too-large"> {
+  if (res.body === null) return "";
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -57,7 +59,7 @@ async function readLimited(res: Response, limit: number): Promise<string | null>
     total += value.byteLength;
     if (total > limit) {
       await reader.cancel().catch(() => {});
-      return null;
+      return "too-large";
     }
     chunks.push(value);
   }
@@ -70,50 +72,60 @@ async function readLimited(res: Response, limit: number): Promise<string | null>
   return new TextDecoder().decode(body);
 }
 
-async function request(
-  local: string,
-  domain: string,
-  doFetch: typeof fetch,
-  signal: AbortSignal,
-): Promise<string | null> {
+/**
+ * What a lookup learned. `found` and `none` are definitive answers from the host (a 200 with a
+ * `names` object, a 404, a redirect, a body over the cap, a malformed identifier). `unavailable`
+ * says nothing about the identifier: a timeout, a network error, a 5xx or 429, any other status,
+ * or a 200 that is not a nostr.json. Only definitive answers may replace a cached result.
+ */
+export type Nip05Lookup = { status: "found"; pubkey: string } | { status: "none" } | { status: "unavailable" };
+
+const FOUND = (pubkey: string): Nip05Lookup => ({ status: "found", pubkey });
+const NONE: Nip05Lookup = { status: "none" };
+const UNAVAILABLE: Nip05Lookup = { status: "unavailable" };
+
+async function request(local: string, domain: string, doFetch: typeof fetch, signal: AbortSignal): Promise<Nip05Lookup> {
   try {
     const url = `https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(local)}`;
     const res = await doFetch(url, { redirect: "manual", signal });
     if (res.status !== 200) {
       await res.body?.cancel().catch(() => {});
-      return null;
+      return res.status === 404 || (res.status >= 300 && res.status < 400) ? NONE : UNAVAILABLE;
     }
     const text = await readLimited(res, MAX_BODY_BYTES);
-    if (text === null) return null;
-    const parsed: unknown = JSON.parse(text);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const names = (parsed as { names?: unknown }).names;
-    if (typeof names !== "object" || names === null || Array.isArray(names)) return null;
-    if (!Object.hasOwn(names, local)) return null;
-    const value = (names as Record<string, unknown>)[local];
-    return typeof value === "string" && HEX64_RE.test(value) ? value : null;
+    if (text === "too-large") return NONE;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return UNAVAILABLE;
+    }
+    const names = typeof parsed === "object" && parsed !== null ? (parsed as { names?: unknown }).names : undefined;
+    if (typeof names !== "object" || names === null || Array.isArray(names)) return UNAVAILABLE;
+    const value = Object.hasOwn(names, local) ? (names as Record<string, unknown>)[local] : undefined;
+    return typeof value === "string" && HEX64_RE.test(value) ? FOUND(value) : NONE;
   } catch {
-    return null;
+    return UNAVAILABLE;
   }
 }
 
 /**
- * The pubkey that `local@domain` points to, or null. One HTTPS request with no redirects followed,
- * a time limit over the whole exchange (a server that ignores the abort is abandoned all the same)
- * and a 64 KB body limit. A malformed identifier makes no request. Every failure is null.
+ * One lookup with a three-way answer (see `Nip05Lookup`). One HTTPS request with no redirects
+ * followed, a time limit over the whole exchange (a server that ignores the abort is abandoned all
+ * the same) and a 64 KB body limit. A malformed identifier makes no request and answers `none`.
  */
-export async function lookupNip05(
+export async function lookupNip05Detailed(
   identifier: string,
   opts: { timeoutMs: number; fetch?: typeof fetch },
-): Promise<string | null> {
+): Promise<Nip05Lookup> {
   const parsed = parseIdentifier(identifier);
-  if (parsed === undefined) return null;
+  if (parsed === undefined) return NONE;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<null>((resolve) => {
+  const timedOut = new Promise<Nip05Lookup>((resolve) => {
     timer = setTimeout(() => {
       controller.abort();
-      resolve(null);
+      resolve(UNAVAILABLE);
     }, opts.timeoutMs);
   });
   try {
@@ -124,10 +136,20 @@ export async function lookupNip05(
   }
 }
 
-/** The normalized identifier the profile claims, or undefined when it has none or it is malformed. */
-function claimedIdentifier(content: ProfileContent | undefined): string | undefined {
+/** The pubkey that `local@domain` points to, or null for every other outcome, failures included. */
+export async function lookupNip05(
+  identifier: string,
+  opts: { timeoutMs: number; fetch?: typeof fetch },
+): Promise<string | null> {
+  const found = await lookupNip05Detailed(identifier, opts);
+  return found.status === "found" ? found.pubkey : null;
+}
+
+/** The profile's identifier: `id` normalized (the cache key), `original` as the profile wrote it, trimmed. */
+function claimedIdentifier(content: ProfileContent | undefined): { id: string; original: string } | undefined {
   const value = content?.nip05;
-  return typeof value === "string" ? parseIdentifier(value)?.id : undefined;
+  const parsed = typeof value === "string" ? parseIdentifier(value) : undefined;
+  return parsed === undefined ? undefined : { id: parsed.id, original: parsed.original };
 }
 
 /** For `_@<u>.divine.video`, the root-domain form `<u>@divine.video`. */
@@ -139,13 +161,13 @@ function divineRootOf(id: string): string | undefined {
 
 /**
  * The one rule for the handle to write, given which identifiers are known to resolve to the pubkey:
- * `<u>@divine.video` when `_@<u>.divine.video` and `<u>@divine.video` both do, else the identifier
- * itself when it does, else nothing.
+ * `<u>@divine.video` when `_@<u>.divine.video` and `<u>@divine.video` both do, else the profile's own
+ * identifier (trimmed, as written) when it does, else nothing.
  */
-function handleFor(id: string, matches: (id: string) => boolean): string | undefined {
-  if (!matches(id)) return undefined;
-  const root = divineRootOf(id);
-  return root !== undefined && matches(root) ? root : id;
+function handleFor(claim: { id: string; original: string }, matches: (id: string) => boolean): string | undefined {
+  if (!matches(claim.id)) return undefined;
+  const root = divineRootOf(claim.id);
+  return root !== undefined && matches(root) ? root : claim.original;
 }
 
 /**
@@ -153,16 +175,56 @@ function handleFor(id: string, matches: (id: string) => boolean): string | undef
  * cached results is ignored. Undefined when nothing verified or nothing is cached.
  */
 export function cachedNip05(pubkey: string, content: ProfileContent | undefined, state: State): string | undefined {
-  const id = claimedIdentifier(content);
-  if (id === undefined) return undefined;
+  const claim = claimedIdentifier(content);
+  if (claim === undefined) return undefined;
   const want = pubkey.toLowerCase();
-  return handleFor(id, (candidate) => state.nip05(candidate)?.pubkey === want);
+  return handleFor(claim, (candidate) => state.nip05(candidate)?.pubkey === want);
+}
+
+/** Skips lookups against a host that keeps failing, and learns from each answer. */
+interface HostGuard {
+  blocked(domain: string): boolean;
+  record(domain: string, available: boolean): void;
+}
+
+async function verify(
+  pubkey: string,
+  content: ProfileContent | undefined,
+  state: State,
+  cfg: Config,
+  opts: { now?: () => number; fetch?: typeof fetch },
+  guard?: HostGuard,
+): Promise<string | undefined> {
+  if (claimedIdentifier(content) === undefined) return undefined;
+  const now = opts.now ?? unixNow;
+  const want = pubkey.toLowerCase();
+  const ttl = cfg.profiles.nip05TtlDays * DAY_SECONDS;
+  const ensure = async (candidate: string): Promise<boolean> => {
+    const cached = state.nip05(candidate);
+    if (cached === undefined || now() - cached.checkedAt >= ttl) {
+      const domain = candidate.split("@")[1]!;
+      if (!guard?.blocked(domain)) {
+        const found = await lookupNip05Detailed(candidate, { timeoutMs: cfg.profiles.nip05TimeoutMs, fetch: opts.fetch });
+        guard?.record(domain, found.status !== "unavailable");
+        // Only a definitive answer replaces the cached row; an outage leaves it, to be retried next run.
+        if (found.status !== "unavailable") state.putNip05(candidate, found.status === "found" ? found.pubkey : null, now());
+      }
+    }
+    return state.nip05(candidate)?.pubkey === want;
+  };
+  const claim = claimedIdentifier(content)!;
+  if (!(await ensure(claim.id))) return undefined;
+  const root = divineRootOf(claim.id);
+  if (root !== undefined) await ensure(root);
+  return cachedNip05(pubkey, content, state);
 }
 
 /**
  * The handle to write for the creator, after a live lookup for each identifier whose cached result
  * is missing or older than `nip05TtlDays` (the root form is looked up only when the identifier itself
- * matched). Undefined when the profile's identifier does not resolve to `pubkey`.
+ * matched). A lookup that could not get an answer (timeout, network error, 5xx, 429) leaves the cached
+ * row as it was, and the answer then comes from that row. Undefined when the profile's identifier
+ * does not resolve to `pubkey`.
  */
 export async function verifiedNip05(
   pubkey: string,
@@ -171,28 +233,24 @@ export async function verifiedNip05(
   cfg: Config,
   opts: { now?: () => number; fetch?: typeof fetch } = {},
 ): Promise<string | undefined> {
-  const id = claimedIdentifier(content);
-  if (id === undefined) return undefined;
-  const now = opts.now ?? unixNow;
-  const want = pubkey.toLowerCase();
-  const ttl = cfg.profiles.nip05TtlDays * DAY_SECONDS;
-  const fresh = (candidate: string) => {
-    const cached = state.nip05(candidate);
-    return cached !== undefined && now() - cached.checkedAt < ttl ? cached : undefined;
+  return verify(pubkey, content, state, cfg, opts);
+}
+
+/** After this many unavailable answers in a row from one host, a refresh stops asking it. */
+const HOST_FAILURE_LIMIT = 5;
+
+/** Every `<u>.divine.video` is one outage, so they share a breaker with `divine.video`. */
+const hostKey = (domain: string): string => (domain.endsWith(".divine.video") ? "divine.video" : domain);
+
+function hostGuard(): HostGuard {
+  const failures = new Map<string, number>();
+  return {
+    blocked: (domain) => (failures.get(hostKey(domain)) ?? 0) >= HOST_FAILURE_LIMIT,
+    record(domain, available) {
+      const key = hostKey(domain);
+      failures.set(key, available ? 0 : (failures.get(key) ?? 0) + 1);
+    },
   };
-  const ensure = async (candidate: string): Promise<boolean> => {
-    let cached = fresh(candidate);
-    if (cached === undefined) {
-      const found = await lookupNip05(candidate, { timeoutMs: cfg.profiles.nip05TimeoutMs, fetch: opts.fetch });
-      state.putNip05(candidate, found, now());
-      cached = { pubkey: found, checkedAt: now() };
-    }
-    return cached.pubkey === want;
-  };
-  if (!(await ensure(id))) return undefined;
-  const root = divineRootOf(id);
-  if (root !== undefined) await ensure(root);
-  return handleFor(id, (candidate) => fresh(candidate)?.pubkey === want);
 }
 
 /** The content object of a kind 0 event, or an empty one when it is not a JSON object. */
@@ -224,7 +282,8 @@ export interface RefreshOptions {
  * the next run does not ask again before `refreshDays`; a stored profile newer than anything the
  * relay returned is kept. Then every creator whose profile names a NIP-05 identifier is verified
  * (live lookups only for results missing or older than `nip05TtlDays`), so that the cache is warm
- * for `cachedNip05`. `fetched` counts the profiles read from the relay, `verified` the creators
+ * for `cachedNip05`. A host that answers "unavailable" five times in a row is skipped for the rest of
+ * the run, and its cached rows are left alone. `fetched` counts the profiles read from the relay, `verified` the creators
  * whose handle verified.
  */
 export async function refreshProfiles(
@@ -277,10 +336,11 @@ export async function refreshProfiles(
   }
 
   let verified = 0;
+  const guard = hostGuard();
   for (const pk of creators) {
     const content = state.profile(pk)?.content;
     if (claimedIdentifier(content) === undefined) continue;
-    if ((await verifiedNip05(pk, content, state, cfg, { now, fetch: opts.fetch })) !== undefined) verified++;
+    if ((await verify(pk, content, state, cfg, { now, fetch: opts.fetch }, guard)) !== undefined) verified++;
   }
   return { fetched, verified };
 }

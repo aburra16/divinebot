@@ -281,9 +281,19 @@ describe("verifiedNip05 and cachedNip05", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("trims the identifier and normalizes its case", async () => {
-    const { fetch } = fakeFetch(() => json({ names: { alice: IMR } }));
-    expect(await verify({ nip05: "  Alice@Example.com " }, fetch)).toBe("alice@example.com");
+  it("returns the profile's own identifier, trimmed, and caches under the normalized key", async () => {
+    const { fetch, calls } = fakeFetch(() => json({ names: { alice: IMR } }));
+    const c = { nip05: "  Alice@Example.com " };
+    expect(await verify(c, fetch)).toBe("Alice@Example.com");
+    expect(calls[0]!.url).toBe("https://example.com/.well-known/nostr.json?name=alice");
+    expect(state.nip05("alice@example.com")).toEqual({ pubkey: IMR, checkedAt: NOW });
+    expect(cachedNip05(IMR, c, state)).toBe("Alice@Example.com");
+  });
+
+  it("returns a Unicode domain verbatim and looks it up in punycode", async () => {
+    const { fetch, calls } = fakeFetch(() => json({ names: { bob: IMR } }));
+    expect(await verify({ nip05: "bob@Bücher.example" }, fetch)).toBe("bob@Bücher.example");
+    expect(calls[0]!.url).toBe("https://xn--bcher-kva.example/.well-known/nostr.json?name=bob");
   });
 
   it("uses a result younger than nip05TtlDays without a request, including a cached failure", async () => {
@@ -305,13 +315,50 @@ describe("verifiedNip05 and cachedNip05", () => {
     expect(state.nip05("alice@example.com")).toEqual({ pubkey: IMR, checkedAt: NOW });
   });
 
-  it("stores a failed check as null so the next call makes no request", async () => {
+  it("keeps an earlier positive result and its checkedAt when the lookup is unavailable", async () => {
+    const ttl = cfg.profiles.nip05TtlDays * DAY;
+    const stale = NOW - ttl - 5;
+    const c = { nip05: "alice@example.com" };
+    const failures: [string, Reply][] = [
+      ["a network error", new Error("ECONNRESET")],
+      ["a 503", new Response("down", { status: 503 })],
+      ["a 429", new Response("slow down", { status: 429 })],
+      ["a 200 that is not nostr.json", new Response("<html>maintenance</html>", { status: 200 })],
+      ["a 200 without names", json({ error: "busy" })],
+    ];
+    for (const [label, reply] of failures) {
+      state.putNip05("alice@example.com", IMR, stale);
+      const { fetch, calls } = fakeFetch(() => reply);
+      expect(await verify(c, fetch), label).toBe("alice@example.com");
+      expect(calls, label).toHaveLength(1);
+      expect(state.nip05("alice@example.com"), label).toEqual({ pubkey: IMR, checkedAt: stale });
+    }
+  });
+
+  it("writes nothing for a first lookup that is unavailable, so the next call tries again", async () => {
     const down = fakeFetch(() => new Error("boom"));
     expect(await verify({ nip05: "alice@example.com" }, down.fetch)).toBeUndefined();
-    expect(state.nip05("alice@example.com")).toEqual({ pubkey: null, checkedAt: NOW });
+    expect(state.nip05("alice@example.com")).toBeUndefined();
     const again = fakeFetch(() => json({ names: { alice: IMR } }));
-    expect(await verify({ nip05: "alice@example.com" }, again.fetch)).toBeUndefined();
-    expect(again.calls).toHaveLength(0);
+    expect(await verify({ nip05: "alice@example.com" }, again.fetch)).toBe("alice@example.com");
+    expect(again.calls).toHaveLength(1);
+  });
+
+  it("stores a definitive answer: a 404, a redirect, an absent name or a mismatch replaces the cached row", async () => {
+    const ttl = cfg.profiles.nip05TtlDays * DAY;
+    const answers: [string, Reply, string | null][] = [
+      ["404", new Response("", { status: 404 }), null],
+      ["301", new Response("", { status: 301, headers: { location: "https://x/" } }), null],
+      ["absent", json({ names: {} }), null],
+      ["mismatch", json({ names: { alice: OTHER } }), OTHER],
+      ["over the cap", new Response("x".repeat(70_000)), null],
+    ];
+    for (const [label, reply, stored] of answers) {
+      state.putNip05("alice@example.com", IMR, NOW - ttl - 5);
+      const { fetch } = fakeFetch(() => reply);
+      expect(await verify({ nip05: "alice@example.com" }, fetch), label).toBeUndefined();
+      expect(state.nip05("alice@example.com"), label).toEqual({ pubkey: stored, checkedAt: NOW });
+    }
   });
 
   it("matches the pubkey case-insensitively", async () => {
@@ -591,6 +638,65 @@ describe("refreshProfiles", () => {
     const out = await refreshProfiles(cfg, state, { now, stream, fetch });
     expect(calls.map((c) => c.url)).toEqual(["https://example.com/.well-known/nostr.json?name=two"]);
     expect(out.verified).toBe(2);
+  });
+
+  it("keeps cached handles when the NIP-05 hosts are down, and a later run recovers", async () => {
+    const ttl = cfg.profiles.nip05TtlDays * DAY;
+    addSource(video(hex(1), 1));
+    addSource(video(hex(2), 2));
+    state.putProfile(hex(1), { nip05: "one@example.com" }, 1, NOW);
+    state.putProfile(hex(2), { nip05: "_@two.divine.video" }, 1, NOW);
+    state.putNip05("one@example.com", hex(1), NOW - ttl - 5);
+    state.putNip05("_@two.divine.video", hex(2), NOW - ttl - 5);
+    const down = fakeFetch(() => new Response("bad gateway", { status: 502 }));
+    const { stream } = fakeStream([]);
+    const out = await refreshProfiles(cfg, state, { now, stream, fetch: down.fetch });
+    expect(out.verified).toBe(2);
+    expect(state.nip05("one@example.com")).toEqual({ pubkey: hex(1), checkedAt: NOW - ttl - 5 });
+    expect(state.nip05("_@two.divine.video")).toEqual({ pubkey: hex(2), checkedAt: NOW - ttl - 5 });
+    expect(cachedNip05(hex(2), state.profile(hex(2))!.content, state)).toBe("_@two.divine.video");
+  });
+
+  it("stops asking a host after 5 unavailable answers in a row and writes nothing for the skipped ones", async () => {
+    for (let i = 1; i <= 8; i++) {
+      addSource(video(hex(i), i));
+      state.putProfile(hex(i), { nip05: `u${i}@example.com` }, 1, NOW);
+    }
+    addSource(video(hex(20), 20));
+    state.putProfile(hex(20), { nip05: "other@elsewhere.example" }, 1, NOW);
+    const { fetch, calls } = fakeFetch((url) =>
+      url.startsWith("https://example.com/") ? new Response("down", { status: 503 }) : json({ names: { other: hex(20) } }),
+    );
+    const { stream } = fakeStream([]);
+    const out = await refreshProfiles(cfg, state, { now, stream, fetch });
+    expect(calls.filter((c) => c.url.startsWith("https://example.com/"))).toHaveLength(5);
+    expect(calls.filter((c) => c.url.startsWith("https://elsewhere.example/"))).toHaveLength(1);
+    for (let i = 1; i <= 8; i++) expect(state.nip05(`u${i}@example.com`), String(i)).toBeUndefined();
+    expect(out.verified).toBe(1);
+  });
+
+  it("counts every divine.video subdomain toward one breaker", async () => {
+    for (let i = 1; i <= 9; i++) {
+      addSource(video(hex(i), i));
+      state.putProfile(hex(i), { nip05: `_@user${i}.divine.video` }, 1, NOW);
+    }
+    const { fetch, calls } = fakeFetch(() => new Error("timeout"));
+    const { stream } = fakeStream([]);
+    await refreshProfiles(cfg, state, { now, stream, fetch });
+    expect(calls).toHaveLength(5);
+  });
+
+  it("resets the breaker count after an answer", async () => {
+    for (let i = 1; i <= 12; i++) {
+      addSource(video(hex(i), i));
+      state.putProfile(hex(i), { nip05: `u${i}@example.com` }, 1, NOW);
+    }
+    // Every fifth request succeeds with a definitive answer: the run never reaches 5 failures in a row.
+    let n = 0;
+    const { fetch, calls } = fakeFetch(() => (++n % 5 === 0 ? json({ names: {} }) : new Response("down", { status: 503 })));
+    const { stream } = fakeStream([]);
+    await refreshProfiles(cfg, state, { now, stream, fetch });
+    expect(calls).toHaveLength(12);
   });
 
   it("survives a hostile NIP-05 server", async () => {
