@@ -88,6 +88,18 @@ describe("buildItem fallbacks", () => {
     expect(tagValue(buildItem(lateUtc, ctx), "published")).toBe("2016-01-01");
   });
 
+  it("falls back to created_at when published_at is milliseconds, negative or not a number", () => {
+    for (const bad of ["1700000000000", "1.7e12", "-5", "yesterday", "", "99999999999999999999"]) {
+      const ev = setTag(native, "published_at", bad);
+      expect(tagValue(buildItem(ev, ctx), "published")).toBe("2026-10-09");
+    }
+  });
+
+  it("omits published when created_at is not a usable date either", () => {
+    const ev = { ...setTag(native, "published_at", "1700000000000"), created_at: 1.7e12 };
+    expect(tagValue(buildItem(ev, ctx), "published")).toBeUndefined();
+  });
+
   it("uses the duration tag when imeta has none, and omits it when neither exists", () => {
     expect(tagValue(buildItem(native, ctx), "duration")).toBe("6");
     expect(tagValue(buildItem(setTag(native, "duration", "9"), ctx), "duration")).toBe("9");

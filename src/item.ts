@@ -25,17 +25,21 @@ function clean(value: string | undefined): string | undefined {
   return v ? v : undefined;
 }
 
-function utcDate(seconds: number): string {
-  return new Date(seconds * 1000).toISOString().slice(0, 10);
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** UTC `YYYY-MM-DD` for a Unix time in seconds, or undefined when it is not a plain four-digit-year date. */
+function utcDate(seconds: number): string | undefined {
+  const d = new Date(seconds * 1000);
+  if (!Number.isFinite(d.getTime())) return undefined;
+  const iso = d.toISOString();
+  const date = iso.slice(0, 10);
+  return ISO_DATE.test(date) ? date : undefined;
 }
 
-function publishedOf(ev: NostrEvent): string {
+function publishedOf(ev: NostrEvent): string | undefined {
   const raw = tagValue(ev.tags, "published_at")?.trim();
-  if (raw && /^\d+$/.test(raw)) {
-    const n = Number(raw);
-    if (Number.isSafeInteger(n) && Number.isFinite(new Date(n * 1000).getTime())) return utcDate(n);
-  }
-  return utcDate(ev.created_at);
+  const fromTag = raw && /^\d+$/.test(raw) ? utcDate(Number(raw)) : undefined;
+  return fromTag ?? utcDate(ev.created_at);
 }
 
 function hashtagsOf(ev: NostrEvent, leading: string[]): string[] {
