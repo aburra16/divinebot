@@ -74,7 +74,9 @@ export function shortRelays(results: Record<string, RelayPublishResult>): string
 /** The lines `publish` and `run` print for a finished publish. */
 export function publishSummary(results: Record<string, RelayPublishResult>): string[] {
   return Object.entries(results).map(([name, r]) => {
-    const line = `${name}: sent ${r.sent}, ok ${r.ok}, failed ${r.failed}, skipped ${r.skipped}`;
+    const line =
+      `${name}: sent ${r.sent}, ok ${r.ok}, failed ${r.failed}, skipped ${r.skipped}` +
+      (r.settled ? `, settled ${r.settled}` : "");
     return r.error === undefined ? line : `${line}; ${r.error}`;
   });
 }
@@ -193,7 +195,7 @@ export async function runPipeline(
     if (built.created + built.changed + built.deletions > 0) {
       const signed = await d.sign(cfg, built.runDir, { keyPath: defaultKeyPath(), askPassphrase: autoPassphrase });
       d.log(`signed ${signed.signed} events`);
-      const results = await d.publish(cfg, state, built.runDir, undefined);
+      const results = await d.publish(cfg, state, built.runDir, undefined, { onNotice: d.warn });
       for (const line of publishSummary(results)) d.log(line);
       const short = shortRelays(results);
       if (short.length > 0) {

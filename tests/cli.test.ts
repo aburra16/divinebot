@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.js";
+import { loadConfig } from "../src/config.js";
+import { openState } from "../src/state.js";
+import { writeManifest } from "./run-manifest.js";
 
 let err: string[];
 let out: string[];
@@ -109,6 +112,51 @@ describe("main", () => {
     try {
       expect(await main(["status"])).toBe(0);
       expect(out.join("\n")).toContain("items: 0 live, 0 deleted");
+    } finally {
+      if (prev === undefined) delete process.env.DIVINEBOT_CONFIG;
+      else process.env.DIVINEBOT_CONFIG = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("publish --settle-refused", () => {
+  it("settles the run's refused events, prints each one, and the run is no longer unfinished", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "divinebot-cli-settle-"));
+    const base = JSON.parse(readFileSync("config.json", "utf8")) as Record<string, unknown>;
+    const file = join(dir, "config.json");
+    const statePath = join(dir, "state.sqlite");
+    writeFileSync(file, JSON.stringify({ ...base, paths: { out: join(dir, "out"), state: statePath } }));
+    const prev = process.env.DIVINEBOT_CONFIG;
+    process.env.DIVINEBOT_CONFIG = file;
+    try {
+      const cfg = loadConfig(file);
+      const runDir = join(dir, "out", "run1");
+      writeManifest(runDir, cfg);
+      writeFileSync(join(runDir, "signed.jsonl"), `${JSON.stringify({ id: "f".repeat(64) })}\n`);
+      const state = openState(statePath);
+      state.recordResult({ eventId: "f".repeat(64), d: "divine-q", kind: 5, createdAt: 1, runId: "run1", relay: "dcosl", ok: true, message: "" });
+      state.recordResult({ eventId: "f".repeat(64), d: "divine-q", kind: 5, createdAt: 1, runId: "run1", relay: "search", ok: false, message: "blocked: no" });
+      state.close();
+
+      expect(await main(["status"])).toBe(0);
+      expect(out.join("\n")).toContain("earlier run run1 is not fully published");
+      out.length = 0;
+
+      expect(await main(["publish", "run1", "--settle-refused"])).toBe(0);
+      expect(out).toEqual([
+        `settled: kind 5 ${"f".repeat(64)} for divine-q on search, refused with: blocked: no`,
+        "settled 1 refused event; they will not be sent again",
+      ]);
+      out.length = 0;
+      expect(await main(["status"])).toBe(0);
+      expect(out.join("\n")).not.toContain("not fully published");
+
+      out.length = 0;
+      expect(await main(["publish", "run1", "--settle-refused"])).toBe(0);
+      expect(out.join("\n")).toMatch(/^nothing to settle/);
+      expect(await main(["publish", "run1", "--settle-refused", "--relays", "dcosl"])).toBe(1);
+      expect(err.join("\n")).toContain("publish does not take --relays");
     } finally {
       if (prev === undefined) delete process.env.DIVINEBOT_CONFIG;
       else process.env.DIVINEBOT_CONFIG = prev;

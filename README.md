@@ -70,6 +70,7 @@ Run them from the repo root. Each stage writes files the next one reads, so any 
 | `npm run build -- [--pilot N] [--first-run]` | Checks the header, then writes `unsigned.jsonl`, `manifest.json` and `report.md` into `out/<run>/` | dcosl (header) | no |
 | `npm run sign -- <run>` | Writes `signed.jsonl` | none | yes |
 | `npm run publish -- <run> [--relays dcosl,search]` | Publishes and records every event id | target relays | no |
+| `npm run publish -- <run> --settle-refused` | Marks the run's refused events as settled, so the run counts as finished; sends nothing | none | no |
 | `npm run verify` | Reads both relays back and lists missing and extra items | target relays | no |
 | `npm run rebroadcast` | Copies the header and both templates to the search relay unchanged | relays | no |
 | `npm run profile:publish` | Signs and publishes the curator's profile from `profile.json` | profile relays | yes |
@@ -162,6 +163,13 @@ An automatic run that finds an unfinished earlier run still syncs, sweeps, refre
 ### Recovery
 
 - **A publish stopped partway.** Run it again: `npm run publish -- <run>`. Events a relay already accepted are not sent twice. To fill one relay only, name it: `npm run publish -- <run> --relays search`. `verify` then compares both relays with state.
+- **A relay refuses an event for good.** A refused event keeps its run unfinished, and an automatic run builds nothing while any run is unfinished. One case settles itself: a kind 5 deletion refused by a relay that never accepted any version of the item has nothing to delete there, so publish records it as settled, prints "deletion refused by <relay>; the relay never held the item" and does not count it as a failure. For any other refusal you have decided to accept, close the run without deleting its folder:
+
+  ```bash
+  npm run publish -- <run> --settle-refused
+  ```
+
+  It prints each event it settles (kind, event id, `d`, relay and the relay's message) and never sends anything. A settled event is not sent again, and `status` stops listing the run. An event still pending from a crash is not settled; publish the run again first.
 - **State and relays disagree.** Run `npm run verify` and read its missing and extra lists before building again.
 - **A bad run was published.** Every event id ever published is recorded in `state/state.sqlite`, so a deletion can name every version of an item. The tool removes items when their videos stop being eligible: a build emits kind 5 deletions for them, within the deletion guard. There is no command that deletes a whole run at once. If a run must be undone, stop and decide with Avi before changing scope or state, because a mass deletion is public and cannot be taken back.
 - **Back up `state/state.sqlite`.** It is the only record of what was published. After each publish:
@@ -177,7 +185,15 @@ An automatic run that finds an unfinished earlier run still syncs, sweeps, refre
 
 On Avi's Mac, launchd runs `scripts/launchd/run-divinebot.sh` daily at 06:00 local time. The script runs `npm run run -- --auto`, appends the output to `state/logs/<date>.log`, and on a non-zero exit shows a macOS notification that names the run directory to look at. It holds no secrets: the key comes from the key file.
 
-Enable it only after the first native import is verified:
+Enable it only after the first native import is verified, and only after this check by hand.
+
+**Check that the search relay takes deletions from the curator.** Every removal is a kind 5 sent to both relays. If search.brainstorm.world refuses kind 5 from the curator, each deletion of an item it holds fails there, the run stays unfinished, and every automatic run after it builds nothing and exits with status 2 until someone settles it. The check publishes one kind 5 that names an item that does not exist, so it deletes nothing. It is a public write, so do it on Avi's go:
+
+```bash
+nak event --prompt-sec -k 5 -t k=39999 -t a=39999:6b279fb268a564ef74f35533f58a165fd4846b9c5595ac0bfc38cab37fda559d:divinebot-deletion-probe -c "" wss://search.brainstorm.world
+```
+
+Paste the `nsec` at the prompt (for an `ncryptsec`, run it with `NOSTR_SECRET_KEY="$(cat ~/.config/divine-videos/curator.key)"` in front instead of `--prompt-sec`, and nak asks for the passphrase). nak prints whether the relay accepted it. If it was refused, do not enable the daily run: ask the relay's operators to accept kind 5 from the curator first.
 
 ```bash
 mkdir -p state/logs

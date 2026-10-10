@@ -4,7 +4,7 @@ import * as nip19 from "nostr-tools/nip19";
 import { givenOptions, parseArgs, type CliArgs } from "./args.js";
 import { build, runDirFor } from "./commands/build.js";
 import { profilePublish } from "./commands/profile-publish.js";
-import { publish, type RelayPublishResult } from "./commands/publish.js";
+import { publish, settleRefused, type RelayPublishResult } from "./commands/publish.js";
 import { rebroadcast } from "./commands/rebroadcast.js";
 import { buildSummary, publishSummary, runPipeline, shortRelays, syncSummary } from "./commands/run.js";
 import { sign } from "./commands/sign.js";
@@ -127,9 +127,21 @@ const commands = new Map<string, Command>([
   [
     "publish",
     async (args) => {
-      allowOptions("publish", args, ["--relays"]);
+      allowOptions("publish", args, args.settleRefused ? ["--settle-refused"] : ["--relays"]);
       const cfg = loadConfig();
       const runDir = runDirArg("publish", cfg, args);
+      if (args.settleRefused) {
+        const settled = await withStateLocked(cfg, (state) => settleRefused(cfg, state, runDir));
+        if (settled.length === 0) {
+          console.log(`nothing to settle: no event of ${runDir} was refused`);
+          return;
+        }
+        for (const s of settled) {
+          console.log(`settled: kind ${s.kind} ${s.eventId} for ${s.d} on ${s.relay}, refused with: ${s.message}`);
+        }
+        console.log(`settled ${settled.length} refused event${settled.length === 1 ? "" : "s"}; they will not be sent again`);
+        return;
+      }
       const results: Record<string, RelayPublishResult> = await withStateLocked(cfg, (state) =>
         publish(cfg, state, runDir, args.relays),
       );

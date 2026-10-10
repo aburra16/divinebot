@@ -40,6 +40,15 @@ export interface State {
   acceptedOn(eventId: string, relay: string): boolean;
   /** True once any relay has accepted `eventId`: publish acts on an event's first OK only. */
   acceptedAnywhere(eventId: string): boolean;
+  /**
+   * True when `relay` refused `eventId` and the refusal is settled: nothing more is owed to that
+   * relay for it, so publish does not resend it and an earlier run does not count it as missing.
+   */
+  settledOn(eventId: string, relay: string): boolean;
+  /**
+   * Records a result. `settled`, on a refusal, says why the refusal needs no retry (see
+   * `settledOn`); any later result for the pair clears it unless it gives its own.
+   */
   recordResult(r: {
     eventId: string;
     d: string;
@@ -49,7 +58,13 @@ export interface State {
     relay: string;
     ok: boolean;
     message: string;
+    settled?: string;
   }): void;
+  /**
+   * Settles, with `reason`, every final refusal recorded under `runId` that is not settled yet
+   * (ok false, not left pending by a crash), and returns them sorted by event id and relay.
+   */
+  settleRefused(runId: string, reason: string): { eventId: string; d: string; kind: number; relay: string; message: string }[];
   markLive(d: string, contentHash: string, tagsJson: string, eventId: string, at: number, address: string): void;
   markDeleted(d: string, at: number): void;
   /** The item's last_changed (the `at` of its latest markLive or markDeleted), live or not. */
@@ -94,6 +109,8 @@ export interface State {
 }
 
 const ITEM_KIND = 39999;
+/** The message publish records a pair with just before sending it; a pair still pending was cut off by a crash. */
+const PENDING = "pending";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS items (
@@ -115,6 +132,7 @@ CREATE TABLE IF NOT EXISTS events (
   relay TEXT NOT NULL,
   ok INTEGER NOT NULL,
   message TEXT NOT NULL,
+  settled TEXT,
   PRIMARY KEY (event_id, relay)
 );
 CREATE INDEX IF NOT EXISTS events_d ON events (d);
@@ -173,6 +191,12 @@ function toSourceRow({ json, ...rest }: SourceDbRow): SourceRow {
   return { ...rest, event: JSON.parse(json) as NostrEvent };
 }
 
+/** Brings a state written by an earlier version up to SCHEMA. Each step is idempotent. */
+function migrate(db: Database.Database): void {
+  const eventColumns = (db.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((c) => c.name);
+  if (!eventColumns.includes("settled")) db.exec("ALTER TABLE events ADD COLUMN settled TEXT");
+}
+
 /** The address of a replaceable source event: `<pubkey>:<d>`. */
 function addressOf(ev: NostrEvent): string {
   const d = ev.tags.find((t) => t[0] === "d")?.[1] ?? "";
@@ -191,6 +215,7 @@ export function openState(path: string): State {
   try {
     if (!inMemory) db.pragma("journal_mode = WAL");
     db.exec(SCHEMA);
+    migrate(db);
   } catch (err) {
     db.close();
     throw err;
@@ -213,12 +238,21 @@ export function openState(path: string): State {
     "SELECT 1 FROM events WHERE event_id = ? AND relay = ? AND ok = 1",
   );
   const selectAcceptedAnywhere = db.prepare("SELECT 1 FROM events WHERE event_id = ? AND ok = 1 LIMIT 1");
-  const upsertEvent = db.prepare(
-    `INSERT INTO events (event_id, d, kind, created_at, run_id, relay, ok, message)
-     VALUES (@eventId, @d, @kind, @createdAt, @runId, @relay, @ok, @message)
-     ON CONFLICT (event_id, relay) DO UPDATE SET
-       ok = excluded.ok, message = excluded.message, run_id = excluded.run_id`,
+  const selectSettled = db.prepare(
+    "SELECT 1 FROM events WHERE event_id = ? AND relay = ? AND ok = 0 AND settled IS NOT NULL",
   );
+  const upsertEvent = db.prepare(
+    `INSERT INTO events (event_id, d, kind, created_at, run_id, relay, ok, message, settled)
+     VALUES (@eventId, @d, @kind, @createdAt, @runId, @relay, @ok, @message, @settled)
+     ON CONFLICT (event_id, relay) DO UPDATE SET
+       ok = excluded.ok, message = excluded.message, run_id = excluded.run_id, settled = excluded.settled`,
+  );
+  const selectRefused = db.prepare(
+    `SELECT event_id AS eventId, d, kind, relay, message FROM events
+      WHERE run_id = ? AND ok = 0 AND settled IS NULL AND message <> '${PENDING}'
+      ORDER BY event_id, relay`,
+  );
+  const updateSettled = db.prepare("UPDATE events SET settled = ? WHERE event_id = ? AND relay = ?");
   const upsertLive = db.prepare(
     `INSERT INTO items (d, address, status, content_hash, tags_json, latest_event_id, first_seen, last_changed)
      VALUES (@d, @address, 'live', @contentHash, @tagsJson, @eventId, @at, @at)
@@ -235,7 +269,7 @@ export function openState(path: string): State {
   );
   const selectLastChanged = db.prepare("SELECT last_changed AS lastChanged FROM items WHERE d = ?");
   const selectRuns = db.prepare(
-    `SELECT run_id AS runId, relay, SUM(ok = 1) AS ok, SUM(ok = 0) AS failed
+    `SELECT run_id AS runId, relay, SUM(ok = 1) AS ok, SUM(ok = 0 AND settled IS NULL) AS failed
        FROM events GROUP BY run_id, relay ORDER BY run_id, relay`,
   );
 
@@ -342,8 +376,18 @@ export function openState(path: string): State {
     acceptedAnywhere(eventId) {
       return selectAcceptedAnywhere.get(eventId) !== undefined;
     },
+    settledOn(eventId, relay) {
+      return selectSettled.get(eventId, relay) !== undefined;
+    },
     recordResult(r) {
-      upsertEvent.run({ ...r, ok: r.ok ? 1 : 0 });
+      upsertEvent.run({ ...r, ok: r.ok ? 1 : 0, settled: !r.ok && r.settled ? r.settled : null });
+    },
+    settleRefused(runId, reason) {
+      return db.transaction(() => {
+        const rows = selectRefused.all(runId) as { eventId: string; d: string; kind: number; relay: string; message: string }[];
+        for (const row of rows) updateSettled.run(reason, row.eventId, row.relay);
+        return rows;
+      })();
     },
     markLive(d, contentHash, tagsJson, eventId, at, address) {
       upsertLive.run({ d, contentHash, tagsJson, eventId, at, address });

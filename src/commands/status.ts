@@ -87,6 +87,7 @@ export function status(cfg: Config, state: State): string {
     lines.push("unfinished runs (an unattended run builds nothing while any exists):");
     for (const warning of unfinished) lines.push(`  ${warning}`);
     lines.push("  sign and publish the run you want to keep, or delete the run's folder under out/ to discard it");
+    lines.push("  a run whose remaining events a relay refuses for good can be closed with npm run publish -- <run> --settle-refused");
   }
 
   const review = runsNeedingReview(cfg);

@@ -20,6 +20,40 @@ afterEach(() => {
   state.close();
 });
 
+describe("migration", () => {
+  it("adds the settled column to a state written before it existed, keeping its rows", () => {
+    const dir = mkdtempSync(join(tmpdir(), "divinebot-migrate-"));
+    try {
+      const path = join(dir, "state.sqlite");
+      const old = new Database(path);
+      old.exec(`CREATE TABLE events (event_id TEXT NOT NULL, d TEXT NOT NULL, kind INTEGER NOT NULL,
+        created_at INTEGER NOT NULL, run_id TEXT NOT NULL, relay TEXT NOT NULL, ok INTEGER NOT NULL,
+        message TEXT NOT NULL, PRIMARY KEY (event_id, relay))`);
+      old.prepare("INSERT INTO events VALUES ('e1', 'd1', 5, 1, 'run-1', 'search', 0, 'blocked')").run();
+      old.close();
+
+      const migrated = openState(path);
+      expect(migrated.settledOn("e1", "search")).toBe(false);
+      expect(migrated.settleRefused("run-1", "why")).toEqual([
+        { eventId: "e1", d: "d1", kind: 5, relay: "search", message: "blocked" },
+      ]);
+      expect(migrated.settledOn("e1", "search")).toBe(true);
+      expect(migrated.runs()).toEqual([{ runId: "run-1", relay: "search", ok: 0, failed: 0 }]);
+      migrated.close();
+      openState(path).close(); // a second open finds the column and changes nothing
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a later result for a settled pair clears the settlement unless it gives its own", () => {
+    state.recordResult({ eventId: "e1", d: "d", kind: 5, createdAt: 1, runId: "r", relay: "search", ok: false, message: "no", settled: "never held" });
+    expect(state.settledOn("e1", "search")).toBe(true);
+    state.recordResult({ eventId: "e1", d: "d", kind: 5, createdAt: 1, runId: "r", relay: "search", ok: false, message: "pending" });
+    expect(state.settledOn("e1", "search")).toBe(false);
+  });
+});
+
 /** A recordResult argument with sensible defaults, so each test names only what it cares about. */
 function result(over: Partial<Parameters<State["recordResult"]>[0]> = {}) {
   return {

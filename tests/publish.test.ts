@@ -4,9 +4,10 @@ import { join } from "node:path";
 import type { NostrEvent } from "nostr-tools/core";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { publish } from "../src/commands/publish.js";
+import { publish, settleRefused } from "../src/commands/publish.js";
 import { loadConfig, type Config } from "../src/config.js";
 import { contentHash } from "../src/diff.js";
+import { earlierRunWarnings } from "../src/earlier-runs.js";
 import { openState, type State } from "../src/state.js";
 import { writeManifest } from "./run-manifest.js";
 import { startStubRelay, type StubContext, type StubRelay } from "./stub-relay.js";
@@ -630,6 +631,90 @@ describe("publish", () => {
     it("an empty signed.jsonl", async () => {
       writeSigned([]);
       await expect(publish(config({ dcosl: REFUSED }), state, runDir)).rejects.toThrow(/no events/);
+    });
+  });
+
+  describe("a refused deletion", () => {
+    const refuseDeletions = (ev: NostrEvent, ctx: StubContext) => ctx.reply(ev.kind !== 5, ev.kind === 5 ? "blocked: kind 5 not allowed" : "");
+    const VERSION = "b".repeat(64);
+
+    /** The item `d` live, its one version accepted on dcosl and, when `onSearch`, on search too. */
+    function liveVersion(d: string, onSearch: boolean): void {
+      state.markLive(d, "h", "[]", VERSION, 1, sourceAddress(d));
+      for (const relay of onSearch ? ["dcosl", "search"] : ["dcosl"]) {
+        state.recordResult({ eventId: VERSION, d, kind: 39999, createdAt: 1, runId: "run0", relay, ok: true, message: "" });
+      }
+    }
+
+    it("is settled, not a failure, on a relay that never held any version of the item", async () => {
+      const [a, b] = [await stub(acceptAll), await stub(refuseDeletions)];
+      liveVersion("divine-x", false);
+      const gone = deletion("divine-x", [VERSION]);
+      writeSigned([gone]);
+      const cfg = config({ dcosl: a.url, search: b.url });
+      const notices: string[] = [];
+
+      const result = await publish(cfg, state, runDir, undefined, { onNotice: (line) => notices.push(line) });
+
+      expect(result.dcosl).toEqual({ sent: 1, ok: 1, failed: 0, skipped: 0 });
+      expect(result.search).toEqual({ sent: 1, ok: 0, failed: 0, skipped: 0, settled: 1 });
+      expect(notices).toEqual([`deletion refused by search; the relay never held the item (divine-x, event ${gone.id})`]);
+      expect(state.acceptedOn(gone.id, "search")).toBe(false);
+      expect(state.settledOn(gone.id, "search")).toBe(true);
+      expect(earlierRunWarnings(cfg, state)).toEqual([]);
+
+      // A rerun does not send it again.
+      const again = await publish(cfg, state, runDir);
+      expect(again.search).toEqual({ sent: 0, ok: 0, failed: 0, skipped: 1 });
+      expect(b.received).toHaveLength(1);
+    });
+
+    it("is still a failure on a relay that accepted a version of the item", async () => {
+      const [a, b] = [await stub(acceptAll), await stub(refuseDeletions)];
+      liveVersion("divine-x", true);
+      writeSigned([deletion("divine-x", [VERSION])]);
+      const cfg = config({ dcosl: a.url, search: b.url });
+
+      const result = await publish(cfg, state, runDir, undefined, { onNotice: () => {} });
+
+      expect(result.search).toEqual({ sent: 1, ok: 0, failed: 1, skipped: 0 });
+      expect(earlierRunWarnings(cfg, state)).toEqual([
+        expect.stringMatching(/^warning: earlier run run1 is not fully published: not published to search: 1 of 1 events missing/),
+      ]);
+    });
+
+    it("--settle-refused settles every refused event of the run, says which, and closes the run", async () => {
+      const [a, b] = [await stub(acceptAll), await stub((ev, ctx) => ctx.reply(false, "blocked: no"))];
+      liveVersion("divine-x", true);
+      const kept = item("divine-y");
+      const gone = deletion("divine-x", [VERSION]);
+      writeSigned([kept, gone]);
+      const cfg = config({ dcosl: a.url, search: b.url });
+      await publish(cfg, state, runDir, undefined, { onNotice: () => {} });
+      expect(earlierRunWarnings(cfg, state)).toHaveLength(1);
+
+      const settled = settleRefused(cfg, state, runDir);
+
+      expect(settled).toEqual([
+        { eventId: kept.id, d: "divine-y", kind: 39999, relay: "search", message: "blocked: no" },
+        { eventId: gone.id, d: "divine-x", kind: 5, relay: "search", message: "blocked: no" },
+      ].sort((x, y) => (x.eventId < y.eventId ? -1 : 1)));
+      expect(earlierRunWarnings(cfg, state)).toEqual([]);
+      expect(settleRefused(cfg, state, runDir)).toEqual([]);
+      // A settled pair is not sent again.
+      const again = await publish(cfg, state, runDir);
+      expect(again.search).toEqual({ sent: 0, ok: 0, failed: 0, skipped: 2 });
+    });
+
+    it("--settle-refused leaves a pair that is still pending (a crash mid-send) alone", async () => {
+      const relay = await stub(acceptAll);
+      const ev = item("divine-z");
+      writeSigned([ev]);
+      const cfg = config({ dcosl: relay.url });
+      state.recordResult({ eventId: ev.id, d: "divine-z", kind: 39999, createdAt: T, runId: "run1", relay: "dcosl", ok: false, message: "pending" });
+
+      expect(settleRefused(cfg, state, runDir)).toEqual([]);
+      expect(earlierRunWarnings(cfg, state)).toHaveLength(1);
     });
   });
 });

@@ -9,6 +9,8 @@ export interface CliArgs {
   auto?: true;
   /** `--first-run`: lets `build` run on a state that holds no items. */
   firstRun?: true;
+  /** `--settle-refused`: `publish` settles a run's refused events instead of sending anything. */
+  settleRefused?: true;
 }
 
 /** The option names present in `args`, for a command to refuse the ones it does not take. */
@@ -18,11 +20,12 @@ export function givenOptions(args: CliArgs): string[] {
   if (args.relays !== undefined) given.push("--relays");
   if (args.auto) given.push("--auto");
   if (args.firstRun) given.push("--first-run");
+  if (args.settleRefused) given.push("--settle-refused");
   return given;
 }
 
 /**
- * Parses `--pilot [N]`, `--relays a,b`, `--auto` and `--first-run`.
+ * Parses `--pilot [N]`, `--relays a,b`, `--auto`, `--first-run` and `--settle-refused`.
  * Anything else starting with `-` is refused; the rest is positional.
  */
 export function parseArgs(argv: string[]): CliArgs {
@@ -53,6 +56,9 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       case "--first-run":
         args.firstRun = true;
+        break;
+      case "--settle-refused":
+        args.settleRefused = true;
         break;
       default:
         if (arg.startsWith("-")) throw new Error(`unknown option ${arg}`);

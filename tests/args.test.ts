@@ -30,6 +30,11 @@ describe("parseArgs", () => {
     expect(parseArgs([]).firstRun).toBeUndefined();
   });
 
+  it("takes --settle-refused as a flag", () => {
+    expect(parseArgs(["run1", "--settle-refused"])).toEqual({ positional: ["run1"], settleRefused: true });
+    expect(givenOptions(parseArgs(["--settle-refused"]))).toEqual(["--settle-refused"]);
+  });
+
   it("splits --relays on commas", () => {
     expect(parseArgs(["--relays", "dcosl, search"]).relays).toEqual(["dcosl", "search"]);
     expect(() => parseArgs(["--relays"])).toThrow(/--relays/);

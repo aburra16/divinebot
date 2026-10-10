@@ -99,9 +99,10 @@ function deps(f: Fakes = {}): Partial<PipelineDeps> {
       f.signCalls?.push(opts);
       return { signed: 3, pubkey: "a".repeat(64) };
     },
-    publish: async (_cfg, _state, _runDir, relays) => {
+    publish: async (_cfg, _state, _runDir, relays, opts) => {
       calls.push("publish");
       f.publishCalls?.push(relays);
+      opts?.onNotice?.("deletion refused by search; the relay never held the item (divine-x, event e)");
       return (f.publishResult ?? {
         dcosl: { sent: 3, ok: 3, failed: 0, skipped: 0 },
         search: { sent: 3, ok: 3, failed: 0, skipped: 0 },
@@ -235,6 +236,18 @@ describe("runPipeline, auto", () => {
     const out = await runPipeline(cfg, state, { auto: true, deps: deps({ created: 0 }) });
     expect(calls).toEqual(["sync", "profiles", "media", "build", "verify"]);
     expect(out.exitCode).toBe(0);
+  });
+
+  it("completes when the only refusals were settled, prints them and passes notices on as warnings", async () => {
+    const publishResult = {
+      dcosl: { sent: 3, ok: 3, failed: 0, skipped: 0 },
+      search: { sent: 3, ok: 2, failed: 0, skipped: 0, settled: 1 },
+    };
+    const out = await runPipeline(cfg, state, { auto: true, deps: deps({ publishResult }) });
+    expect(out.exitCode).toBe(0);
+    expect(calls).toContain("verify");
+    expect(logs).toContain("search: sent 3, ok 2, failed 0, skipped 0, settled 1");
+    expect(warnings).toContain("deletion refused by search; the relay never held the item (divine-x, event e)");
   });
 
   it("fails with a plain message when a relay did not accept every event", async () => {

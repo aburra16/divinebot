@@ -23,6 +23,10 @@ const TIMED_OUT = "publish timed out";
 const DEFAULT_BACKOFF_MS = 30_000;
 const DEFAULT_PROGRESS_EVERY = 500;
 const DEFAULT_TIMEOUT_BREAKER = 20;
+/** Why a deletion refused by a relay that never held its item needs no retry. */
+const NEVER_HELD = "the relay never held the item";
+/** Why a refusal `--settle-refused` closed needs no retry. */
+const SETTLED_BY_OPERATOR = "settled by the operator with --settle-refused";
 
 export interface PublishOptions {
   /**
@@ -42,6 +46,8 @@ export interface PublishOptions {
    * `publish timed out` results in a row. Defaults to 20.
    */
   timeoutBreaker?: number;
+  /** Takes a line for each refusal publish settles by itself (see publishTo). Defaults to a line on stderr. */
+  onNotice?: (line: string) => void;
 }
 
 export interface RelayPublishResult {
@@ -49,8 +55,13 @@ export interface RelayPublishResult {
   sent: number;
   ok: number;
   failed: number;
-  /** Events the relay had already accepted, in this run or an earlier one. Never resent. */
+  /** Events the relay had already accepted, or refused with the refusal settled, in this run or an earlier one. Never resent. */
   skipped: number;
+  /**
+   * Deletions the relay refused although it never held any version of their item: nothing is
+   * left to delete there, so they are settled, not failed. Present only when above 0.
+   */
+  settled?: number;
   /** Why the relay was given up on: it could not be reached, or it dropped the connection. */
   error?: string;
 }
@@ -74,6 +85,7 @@ interface Run {
   progressEvery: number;
   onProgress: (line: string) => void;
   timeoutBreaker: number;
+  onNotice: (line: string) => void;
   onEventSent?: (n: number) => void;
   /** Pairs finished so far, across relays. */
   finished: number;
@@ -217,7 +229,12 @@ function throttle(eventsPerSecond: number, signal: AbortSignal): () => Promise<v
   };
 }
 
-function record(run: Run, relay: string, { event, d }: Outgoing, res: { ok: boolean; message: string }): void {
+function record(
+  run: Run,
+  relay: string,
+  { event, d }: Outgoing,
+  res: { ok: boolean; message: string; settled?: string },
+): void {
   run.state.recordResult({
     eventId: event.id,
     d,
@@ -227,7 +244,19 @@ function record(run: Run, relay: string, { event, d }: Outgoing, res: { ok: bool
     relay,
     ok: res.ok,
     message: res.message,
+    ...(res.settled === undefined ? {} : { settled: res.settled }),
   });
+}
+
+/**
+ * True for a deletion `relay` has never accepted any version of the item for: neither an id the
+ * deletion names nor any version state recorded for its `d`. A refusal there leaves nothing
+ * on the relay to delete.
+ */
+function neverHeld(state: State, { event, d }: Outgoing, relay: string): boolean {
+  if (event.kind !== DELETION_KIND) return false;
+  const ids = new Set([...event.tags.filter((t) => t[0] === "e" && t[1]).map((t) => t[1]!), ...state.versionsOf(d)]);
+  return ![...ids].some((id) => state.acceptedOn(id, relay));
 }
 
 /**
@@ -260,7 +289,7 @@ function applyFirstOk(state: State, { event, d, address }: Outgoing): void {
 async function publishTo(run: Run, name: string): Promise<RelayPublishResult> {
   const { cfg, state } = run;
   const url = relayUrl(cfg, name);
-  const todo = run.outgoing.filter((o) => !state.acceptedOn(o.event.id, name));
+  const todo = run.outgoing.filter((o) => !state.acceptedOn(o.event.id, name) && !state.settledOn(o.event.id, name));
   const result: RelayPublishResult = { sent: 0, ok: 0, failed: 0, skipped: run.outgoing.length - todo.length };
   if (todo.length === 0 || run.stop.signal.aborted) return result;
 
@@ -287,10 +316,19 @@ async function publishTo(run: Run, name: string): Promise<RelayPublishResult> {
         res = await publishEvent(relay, out.event, cfg.publish.okTimeoutMs);
       }
       if (res.ok && !state.acceptedAnywhere(out.event.id)) applyFirstOk(state, out);
-      record(run, name, out, res);
+      // A real refusal: the relay answered OK false, not a timeout, a rate limit or a dropped connection.
+      const refused = !res.ok && relay.connected && res.message !== TIMED_OUT && !res.message.startsWith(RATE_LIMITED);
+      const settle = refused && neverHeld(state, out, name);
+      if (settle) {
+        record(run, name, out, { ...res, settled: NEVER_HELD });
+        result.settled = (result.settled ?? 0) + 1;
+        run.onNotice(`deletion refused by ${name}; ${NEVER_HELD} (${out.d}, event ${out.event.id})`);
+      } else {
+        record(run, name, out, res);
+      }
       result.sent++;
       if (res.ok) result.ok++;
-      else result.failed++;
+      else if (!settle) result.failed++;
       run.onEventSent?.(++run.finished);
       if (result.sent % run.progressEvery === 0) run.onProgress(`${name}: ${result.sent}/${todo.length}`);
       const events = `${result.sent} event${result.sent === 1 ? "" : "s"}`;
@@ -345,6 +383,7 @@ export async function publish(
     progressEvery: opts.progressEvery ?? DEFAULT_PROGRESS_EVERY,
     onProgress: opts.onProgress ?? ((line) => process.stderr.write(`${line}\n`)),
     timeoutBreaker: opts.timeoutBreaker ?? DEFAULT_TIMEOUT_BREAKER,
+    onNotice: opts.onNotice ?? ((line) => process.stderr.write(`${line}\n`)),
     onEventSent: opts.onEventSent,
     finished: 0,
     stop: new AbortController(),
@@ -363,4 +402,18 @@ export async function publish(
     results[names[i]!] = s.value;
   }
   return results;
+}
+
+/**
+ * `publish --settle-refused`: settles every final refusal recorded for the run (see
+ * `State.settleRefused`), so a run a relay will never fully accept can be closed without
+ * deleting its folder. Sends nothing. Returns what was settled, for the caller to print.
+ */
+export function settleRefused(
+  cfg: Config,
+  state: State,
+  runDir: string,
+): { eventId: string; d: string; kind: number; relay: string; message: string }[] {
+  checkRunConfig(cfg, runDir);
+  return state.settleRefused(basename(runDir), SETTLED_BY_OPERATOR);
 }

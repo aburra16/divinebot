@@ -51,7 +51,8 @@ function unpublishedOf(cfg: Config, state: State, runDir: string): Unpublished {
   }
   const result: Unpublished = { missing: [], shortRelays: [] };
   for (const relay of manifestRelays(runDir) ?? Object.keys(cfg.relays)) {
-    const short = ids.filter((id) => !state.acceptedOn(id, relay)).length;
+    // A settled refusal (see State.settledOn) is done: nothing more is owed to that relay for it.
+    const short = ids.filter((id) => !state.acceptedOn(id, relay) && !state.settledOn(id, relay)).length;
     if (short === 0) continue;
     result.missing.push(`not published to ${relay}: ${short} of ${ids.length} events missing`);
     result.shortRelays.push(relay);
@@ -62,7 +63,8 @@ function unpublishedOf(cfg: Config, state: State, runDir: string): Unpublished {
 /**
  * One warning line for each earlier run in `<paths.out>` that was built but is not fully
  * published, in run id order: it has `unsigned.jsonl` but no `signed.jsonl` (not signed), or a
- * `signed.jsonl` whose events some relay it was built for has not accepted, per state. The
+ * `signed.jsonl` whose events some relay it was built for has neither accepted nor had its
+ * refusal settled, per state. The
  * relays are those in the run's manifest, else the configured ones. A run some relay lacks
  * events of ends with the `publish --relays` command that sends just those. A dir without a
  * `manifest.json` is not a run and is ignored, and the scan reads `signed.jsonl` ids only.
