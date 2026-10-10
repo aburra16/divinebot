@@ -143,11 +143,12 @@ async function decodeSecret(
 /**
  * The default passphrase prompt: on stderr, reading from the terminal with echo muted. Without
  * a TTY there is no way to keep the passphrase off the screen and out of a pipe, so it refuses
- * and tells the human to run the step themselves.
+ * and tells the human to run the command themselves. The message names no command, because
+ * `sign` and `profile:publish` both use it. An unattended run never gets here (see `run --auto`).
  */
 export function promptPassphrase(): Promise<string> {
   if (!process.stdin.isTTY) {
-    return Promise.reject(new Error("ncryptsec needs an interactive terminal: run npm run sign yourself"));
+    return Promise.reject(new Error("the key is encrypted and needs a passphrase typed at a terminal: run this command yourself in a terminal"));
   }
   return new Promise((resolve, reject) => {
     let muted = false;

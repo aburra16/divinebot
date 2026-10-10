@@ -326,6 +326,20 @@ function source(over: { id?: string; createdAt?: number; d?: string; pubkey?: st
 }
 
 describe("sources", () => {
+  it("tallies sources by class, status and skip reason without reading events", () => {
+    state.upsertSource(source({ id: "b1", d: "a" }), "native", null, 1);
+    state.upsertSource(source({ id: "b2", d: "b" }), "native", null, 1);
+    state.upsertSource(source({ id: "b3", d: "c" }), "native", "no video hash", 1);
+    state.upsertSource(source({ id: "b4", d: "d" }), "vine", null, 1);
+    state.setSourceStatus(`${PK}:b`, "deleted", 2);
+    expect(state.sourceTally()).toEqual([
+      { class: "native", status: "active", skipReason: null, count: 1 },
+      { class: "native", status: "active", skipReason: "no video hash", count: 1 },
+      { class: "native", status: "deleted", skipReason: null, count: 1 },
+      { class: "vine", status: "active", skipReason: null, count: 1 },
+    ]);
+  });
+
   it("a first upsert is new and round-trips the event", () => {
     const ev = source();
     expect(state.upsertSource(ev, "native", null, 500)).toBe("new");

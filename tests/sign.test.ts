@@ -222,7 +222,7 @@ describe("promptPassphrase", () => {
     Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
     try {
       const message = await failure(() => promptPassphrase());
-      expect(message).toBe("ncryptsec needs an interactive terminal: run npm run sign yourself");
+      expect(message).toBe("the key is encrypted and needs a passphrase typed at a terminal: run this command yourself in a terminal");
     } finally {
       if (original) Object.defineProperty(process.stdin, "isTTY", original);
       else delete (process.stdin as { isTTY?: boolean }).isTTY;

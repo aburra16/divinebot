@@ -76,6 +76,8 @@ export interface State {
   touchSources(addresses: string[], seenAt: number): void;
   /** The address of every source matching the filter, sorted. Unlike `sources`, it does not load the events. */
   sourceAddresses(filter?: { status?: SourceStatus; class?: SourceClass }): string[];
+  /** How many sources there are per class, status and skip reason (null when eligible), for the status overview. Reads no events. */
+  sourceTally(): { class: SourceClass; status: SourceStatus; skipReason: string | null; count: number }[];
   /** Runs `fn` in one SQLite transaction: all of its writes commit together, or none do if it throws. Nests. */
   transaction<T>(fn: () => T): T;
 
@@ -235,6 +237,11 @@ export function openState(path: string): State {
   const selectRuns = db.prepare(
     `SELECT run_id AS runId, relay, SUM(ok = 1) AS ok, SUM(ok = 0) AS failed
        FROM events GROUP BY run_id, relay ORDER BY run_id, relay`,
+  );
+
+  const selectSourceTally = db.prepare(
+    `SELECT class, status, skip_reason AS skipReason, COUNT(*) AS count
+       FROM sources GROUP BY class, status, skip_reason ORDER BY class, status, skip_reason`,
   );
 
   const selectCursor = db.prepare("SELECT value FROM cursors WHERE name = ?");
@@ -403,6 +410,9 @@ export function openState(path: string): State {
       }
       const sql = `SELECT address FROM sources${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY address`;
       return (db.prepare(sql).all(...params) as { address: string }[]).map((row) => row.address);
+    },
+    sourceTally() {
+      return selectSourceTally.all() as { class: SourceClass; status: SourceStatus; skipReason: string | null; count: number }[];
     },
     transaction<T>(fn: () => T): T {
       return db.transaction(fn)();
