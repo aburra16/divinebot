@@ -1,7 +1,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 
-/** A lock older than this is taken to belong to a run that died without cleaning up. */
+/** A lock with no readable pid that is older than this is taken to belong to a run that died without cleaning up. */
 const STALE_MS = 6 * 3_600_000;
 
 export interface LockOptions {
@@ -30,13 +30,16 @@ function create(path: string, now: number): boolean {
   return true;
 }
 
-/** Who holds the lock and since when, from its content; the file's own mtime if the content is unreadable. */
-function holder(path: string): { pid: string; since: number } {
-  let pid = "an unknown process";
+/**
+ * Who holds the lock and since when, from its content; the file's own mtime if the time is
+ * unreadable. `pid` is undefined when the file names none.
+ */
+function holder(path: string): { pid: number | undefined; since: number } {
+  let pid: number | undefined;
   let since: number | undefined;
   try {
     const [first, second] = readFileSync(path, "utf8").split("\n");
-    if (first !== undefined && /^\d+$/.test(first)) pid = first;
+    if (first !== undefined && /^\d+$/.test(first) && Number(first) > 0) pid = Number(first);
     const parsed = Date.parse(second ?? "");
     if (Number.isFinite(parsed)) since = parsed;
   } catch {
@@ -52,11 +55,32 @@ function holder(path: string): { pid: string; since: number } {
   return { pid, since };
 }
 
+/** True while a process with this pid exists. EPERM means it exists but belongs to another user. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return isCode(err, "EPERM");
+  }
+}
+
+/** True when the lock file still holds this process's pid. */
+function ownedByUs(path: string): boolean {
+  try {
+    return readFileSync(path, "utf8").split("\n")[0] === String(process.pid);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Runs `fn` holding the lock file at `path`. The file is created exclusively (a second holder
  * fails at once), holds the pid and the ISO time, and is removed when `fn` ends, however it
- * ends. A lock more than 6 hours old is stale: it is warned about and replaced. Moving it
- * aside first means that of two runs finding the same stale lock, only one replaces it.
+ * ends, as long as it still holds our pid. A lock whose process is alive is held however old it
+ * is (a first harvest runs for hours). It is stale when its process is no longer running, or
+ * when it names no pid and is more than 6 hours old: then it is warned about and replaced.
+ * Moving it aside first means that of two runs finding the same stale lock, only one replaces it.
  */
 export async function withLock<T>(path: string, fn: () => Promise<T>, opts: LockOptions = {}): Promise<T> {
   const now = opts.now ?? Date.now;
@@ -65,14 +89,19 @@ export async function withLock<T>(path: string, fn: () => Promise<T>, opts: Lock
 
   if (!create(path, now())) {
     const { pid, since } = holder(path);
-    const age = now() - since;
-    if (age <= STALE_MS) {
+    const sinceText = new Date(since).toISOString();
+    const stale = pid === undefined ? now() - since > STALE_MS : !isAlive(pid);
+    if (!stale) {
       throw new Error(
-        `another run holds the lock ${path} (process ${pid}, since ${new Date(since).toISOString()}); ` +
+        `another run holds the lock ${path} (process ${pid ?? "unknown"}, since ${sinceText}); ` +
           "wait for it to finish, or delete the file if no run is going",
       );
     }
-    warn(`the lock ${path} is older than 6 hours (process ${pid}, since ${new Date(since).toISOString()}); treating it as stale and replacing it`);
+    warn(
+      pid === undefined
+        ? `the lock ${path} names no process and is older than 6 hours (since ${sinceText}); treating it as stale and replacing it`
+        : `the lock ${path} belongs to process ${pid} (since ${sinceText}), which is no longer running; treating it as stale and replacing it`,
+    );
     const aside = `${path}.stale-${process.pid}`;
     try {
       renameSync(path, aside);
@@ -87,6 +116,7 @@ export async function withLock<T>(path: string, fn: () => Promise<T>, opts: Lock
   try {
     return await fn();
   } finally {
-    rmSync(path, { force: true });
+    // Only our own lock: if it was replaced meanwhile, the file belongs to another run.
+    if (ownedByUs(path)) rmSync(path, { force: true });
   }
 }

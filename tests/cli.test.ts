@@ -176,7 +176,8 @@ describe("the lock", () => {
     const statePath = join(dir, "state", "state.sqlite");
     writeFileSync(file, JSON.stringify({ ...base, paths: { out: join(dir, "out"), state: statePath } }));
     mkdirSync(join(dir, "state"));
-    writeFileSync(`${statePath}.lock`, `4242\n${new Date().toISOString()}\n`);
+    // This test runner's own pid: a live process, so the lock is held.
+    writeFileSync(`${statePath}.lock`, `${process.pid}\n${new Date().toISOString()}\n`);
     prev = process.env.DIVINEBOT_CONFIG;
     process.env.DIVINEBOT_CONFIG = file;
   });
@@ -201,7 +202,7 @@ describe("the lock", () => {
     expect(await main(argv)).toBe(1);
     expect(err.join("\n")).toMatch(/another run holds the lock .*state\.sqlite\.lock/);
     // The held lock is left alone.
-    expect(readFileSync(join(dir, "state", "state.sqlite.lock"), "utf8")).toContain("4242");
+    expect(readFileSync(join(dir, "state", "state.sqlite.lock"), "utf8")).toContain(String(process.pid));
   });
 
   it("status does not need the lock", async () => {

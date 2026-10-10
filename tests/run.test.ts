@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -356,21 +357,59 @@ describe("withLock", () => {
     expect(existsSync(lockPath())).toBe(false);
   });
 
-  it("refuses a lock held less than 6 hours, naming the file, and leaves it alone", async () => {
+  /** The pid of a process that has already exited. */
+  const deadPid = (): number => {
+    const child = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+    return Number(child.stdout);
+  };
+  const writeLock = (content: string) => {
     mkdirSync(join(dir, "x"), { recursive: true });
-    writeFileSync(lockPath(), `4242\n${new Date((NOW - 5 * 3600) * 1000).toISOString()}\n`);
-    await expect(withLock(lockPath(), async () => 1, { now: () => NOW * 1000 })).rejects.toThrow(/state\.lock.*4242|4242.*state\.lock/);
+    writeFileSync(lockPath(), content);
+  };
+  const hoursAgo = (h: number) => new Date((NOW - h * 3600) * 1000).toISOString();
+
+  it("refuses a lock whose process is alive, naming the file and the process, and leaves it alone", async () => {
+    writeLock(`${process.pid}\n${hoursAgo(5)}\n`);
+    await expect(withLock(lockPath(), async () => 1, { now: () => NOW * 1000 })).rejects.toThrow(
+      new RegExp(`another run holds the lock .*state\\.lock \\(process ${process.pid},`),
+    );
     expect(existsSync(lockPath())).toBe(true);
   });
 
-  it("replaces a lock older than 6 hours, with a warning", async () => {
-    mkdirSync(join(dir, "x"), { recursive: true });
-    writeFileSync(lockPath(), `4242\n${new Date((NOW - 7 * 3600) * 1000).toISOString()}\n`);
+  it("respects a lock older than 6 hours while its process is alive", async () => {
+    writeLock(`${process.pid}\n${hoursAgo(30)}\n`);
     const warned: string[] = [];
-    const result = await withLock(lockPath(), async () => "ran", { now: () => NOW * 1000, warn: (m) => warned.push(m) });
-    expect(result).toBe("ran");
-    expect(warned.join("\n")).toMatch(/stale|older than 6 hours/);
+    await expect(withLock(lockPath(), async () => 1, { now: () => NOW * 1000, warn: (m) => warned.push(m) })).rejects.toThrow(
+      /another run holds the lock/,
+    );
+    expect(warned).toEqual([]);
+    expect(readFileSync(lockPath(), "utf8")).toContain(String(process.pid));
+  });
+
+  it("replaces a lock whose process is dead, however recent, with a warning", async () => {
+    const pid = deadPid();
+    writeLock(`${pid}\n${hoursAgo(0.1)}\n`);
+    const warned: string[] = [];
+    const result = await withLock(lockPath(), async () => readFileSync(lockPath(), "utf8"), { now: () => NOW * 1000, warn: (m) => warned.push(m) });
+    expect(result.split("\n")[0]).toBe(String(process.pid));
+    expect(warned.join("\n")).toMatch(new RegExp(`process ${pid} .*no longer running.*replacing it`));
     expect(existsSync(lockPath())).toBe(false);
+  });
+
+  it("holds a lock with no readable pid until it is older than 6 hours", async () => {
+    writeLock(`garbage\n${hoursAgo(5)}\n`);
+    await expect(withLock(lockPath(), async () => 1, { now: () => NOW * 1000 })).rejects.toThrow(/another run holds the lock/);
+    writeLock(`garbage\n${hoursAgo(7)}\n`);
+    const warned: string[] = [];
+    expect(await withLock(lockPath(), async () => "ran", { now: () => NOW * 1000, warn: (m) => warned.push(m) })).toBe("ran");
+    expect(warned.join("\n")).toMatch(/older than 6 hours/);
+  });
+
+  it("leaves in place a lock that another process wrote while the function ran", async () => {
+    await withLock(lockPath(), async () => {
+      writeFileSync(lockPath(), `4242\n${new Date().toISOString()}\n`);
+    });
+    expect(readFileSync(lockPath(), "utf8")).toContain("4242");
   });
 
   it("removes the lock when the function throws", async () => {

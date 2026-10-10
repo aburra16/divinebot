@@ -186,7 +186,7 @@ An automatic run that finds an unfinished earlier run still syncs, sweeps, refre
   ```
 
   `state/` is gitignored, so keep a copy outside the repo as well.
-- **A run holds a lock** at `state/state.sqlite.lock` so two runs never overlap. A second command that meets a held lock stops and names the process and the time. A lock more than six hours old is taken to belong to a dead run, and it is replaced with a warning.
+- **A run holds a lock** at `state/state.sqlite.lock` so two runs never overlap. A second command that meets a held lock stops and names the process and the time. A lock is held for as long as the process it names is running, however long that takes (a first harvest runs for hours). A lock whose process is no longer running belongs to a dead run, and it is replaced with a warning; so is a lock file that names no process and is more than six hours old.
 
 ## Scheduling
 
