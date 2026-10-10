@@ -184,6 +184,7 @@ describe("runPipeline, sweep cadence", () => {
     state.setCursor("videos", NOW - 100);
     const built: unknown[] = [];
     const sweepError = new Error("the sweep read no videos; nothing was marked vanished; run npm run sweep again later");
+    publishedOnce();
     const out = await runPipeline(cfg, state, { auto: true, deps: deps({ built, sweepError }) });
     expect(calls).toEqual(["sync", "sweep", "profiles", "media", "build", "sign", "publish", "verify"]);
     expect(built[0]).toMatchObject({ vanished: 0 });
@@ -199,7 +200,29 @@ describe("runPipeline, sweep cadence", () => {
   });
 });
 
+/** One published item, so state is not empty: an automatic run refuses an empty state. */
+const publishedOnce = () => state.markLive("divine-x", "h", "[]", "e".repeat(64), 1, "a:x");
+
 describe("runPipeline, auto", () => {
+  beforeEach(publishedOnce);
+
+  it("refuses a state with no items before syncing, since the first import is for a person", async () => {
+    const empty = openState(":memory:");
+    try {
+      await expect(runPipeline(cfg, empty, { auto: true, deps: deps() })).rejects.toThrow(
+        /state .* holds no items, live or deleted.*an automatic run never does the first import.*npm run run -- --first-run/,
+      );
+      expect(calls).toEqual([]);
+      expect(existsSync(`${cfg.paths.state}.lock`)).toBe(false);
+      // A state whose items were all deleted is not empty.
+      empty.markLive("divine-y", "h", "[]", "f".repeat(64), 1, "a:y");
+      empty.markDeleted("divine-y", 2);
+      await expect(runPipeline(cfg, empty, { auto: true, deps: deps() })).resolves.toMatchObject({ exitCode: 0 });
+    } finally {
+      empty.close();
+    }
+  });
+
   it("refuses pilot and first-run before doing anything", async () => {
     await expect(runPipeline(cfg, state, { auto: true, pilot: 5, deps: deps() })).rejects.toThrow(/--auto.*--pilot|pilot.*--auto/);
     await expect(runPipeline(cfg, state, { auto: true, firstRun: true, deps: deps() })).rejects.toThrow(/first-run/);

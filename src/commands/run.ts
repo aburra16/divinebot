@@ -103,7 +103,7 @@ async function autoPassphrase(): Promise<string> {
  * Both modes read the source (`sync`, then `sweep` when the last one is a week old, never on a
  * first harvest; a sweep that throws is a warning and the run goes on with nothing vanished), refresh profiles, check media and `build`. A manual run stops there and prints
  * the run dir and the commands that come next. An unattended run (`auto`) refuses `pilot` and
- * `firstRun`, which want a human; it stops for review, writing `NEEDS_REVIEW` into the run and
+ * `firstRun`, which want a human, and a state with no items, before reading anything; it stops for review, writing `NEEDS_REVIEW` into the run and
  * returning exit code 2, when the build breached a guard. When an earlier run is not fully
  * published it still syncs, sweeps, refreshes and checks media, but builds nothing (so
  * unfinished runs never pile up) and returns exit code 2 with no run dir. Otherwise it signs,
@@ -117,6 +117,17 @@ export async function runPipeline(
 ): Promise<RunOutcome> {
   if (opts.auto && opts.pilot !== undefined) throw new Error("--auto does not take --pilot: a pilot run is for a person to check");
   if (opts.auto && opts.firstRun) throw new Error("--auto does not take --first-run: the first import is for a person to check");
+  if (opts.auto) {
+    // build would refuse this state too, but only after a full harvest (about 1.1 GB) and hours of media checks.
+    const { live, deleted } = state.counts();
+    if (live + deleted === 0) {
+      throw new Error(
+        `state ${cfg.paths.state} holds no items, live or deleted, and an automatic run never does the first import. ` +
+          "If anything was published before, the state file was lost or replaced; restore it from a backup. " +
+          "For the very first import, run npm run run -- --first-run (or --pilot N --first-run) and review it",
+      );
+    }
+  }
   const d: PipelineDeps = {
     sync,
     sweep,
