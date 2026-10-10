@@ -187,27 +187,69 @@ interface HostGuard {
   record(domain: string, available: boolean): void;
 }
 
+/** NIP-05 requests per second, at most, across a refresh. */
+const NIP05_REQUESTS_PER_SECOND = 5;
+/**
+ * A verified handle whose lookups have stayed unavailable this many TTLs past its last definitive
+ * answer is dropped, so the handle of a subdomain that died for good does not live on in the cache.
+ */
+const DEAD_HANDLE_TTLS = 4;
+
+export interface Nip05Options {
+  /** Seconds since the epoch. */
+  now?: () => number;
+  fetch?: typeof fetch;
+  /** Waits between batches of requests. Tests inject it. */
+  sleep?: (ms: number) => Promise<void>;
+  /** A number from 0 up to 1, for the expiry jitter. Defaults to Math.random. */
+  random?: () => number;
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Spaces requests as media.ts does: a batch of `perSecond`, then a full second. */
+function pacer(perSecond: number, sleep: (ms: number) => Promise<void>): () => Promise<void> {
+  let sent = 0;
+  return async () => {
+    if (sent > 0 && sent % perSecond === 0) await sleep(1000);
+    sent++;
+  };
+}
+
 async function verify(
   pubkey: string,
   content: ProfileContent | undefined,
   state: State,
   cfg: Config,
-  opts: { now?: () => number; fetch?: typeof fetch },
+  opts: Nip05Options,
   guard?: HostGuard,
+  pace?: () => Promise<void>,
 ): Promise<string | undefined> {
   if (claimedIdentifier(content) === undefined) return undefined;
   const now = opts.now ?? unixNow;
+  const random = opts.random ?? Math.random;
   const want = pubkey.toLowerCase();
   const ttl = cfg.profiles.nip05TtlDays * DAY_SECONDS;
+  // Stored answers are dated up to a day early, so a cache filled in one run does not all expire on the same day.
+  const checkedAt = () => now() - Math.floor(random() * DAY_SECONDS);
   const ensure = async (candidate: string): Promise<boolean> => {
     const cached = state.nip05(candidate);
     if (cached === undefined || now() - cached.checkedAt >= ttl) {
       const domain = candidate.split("@")[1]!;
+      let available = false;
       if (!guard?.blocked(domain)) {
+        await pace?.();
         const found = await lookupNip05Detailed(candidate, { timeoutMs: cfg.profiles.nip05TimeoutMs, fetch: opts.fetch });
         guard?.record(domain, found.status !== "unavailable");
         // Only a definitive answer replaces the cached row; an outage leaves it, to be retried next run.
-        if (found.status !== "unavailable") state.putNip05(candidate, found.status === "found" ? found.pubkey : null, now());
+        if (found.status !== "unavailable") {
+          available = true;
+          state.putNip05(candidate, found.status === "found" ? found.pubkey : null, checkedAt());
+        }
+      }
+      // ...unless the row is a verified handle that has gone without a definitive answer for too long.
+      if (!available && cached?.pubkey && now() - cached.checkedAt > DEAD_HANDLE_TTLS * ttl) {
+        state.putNip05(candidate, null, checkedAt());
       }
     }
     return state.nip05(candidate)?.pubkey === want;
@@ -223,15 +265,16 @@ async function verify(
  * The handle to write for the creator, after a live lookup for each identifier whose cached result
  * is missing or older than `nip05TtlDays` (the root form is looked up only when the identifier itself
  * matched). A lookup that could not get an answer (timeout, network error, 5xx, 429) leaves the cached
- * row as it was, and the answer then comes from that row. Undefined when the profile's identifier
- * does not resolve to `pubkey`.
+ * row as it was, and the answer then comes from that row, except that a verified handle more than
+ * 4 TTLs old is then dropped. A stored answer is dated up to a day before now (`random`), so expiry
+ * spreads out. Undefined when the profile's identifier does not resolve to `pubkey`.
  */
 export async function verifiedNip05(
   pubkey: string,
   content: ProfileContent | undefined,
   state: State,
   cfg: Config,
-  opts: { now?: () => number; fetch?: typeof fetch } = {},
+  opts: Nip05Options = {},
 ): Promise<string | undefined> {
   return verify(pubkey, content, state, cfg, opts);
 }
@@ -267,11 +310,8 @@ function parseProfile(ev: NostrEvent): ProfileContent {
 const supersedes = (a: NostrEvent, b: NostrEvent): boolean =>
   a.created_at > b.created_at || (a.created_at === b.created_at && a.id < b.id);
 
-export interface RefreshOptions {
-  /** Seconds since the epoch. */
-  now?: () => number;
+export interface RefreshOptions extends Nip05Options {
   stream?: typeof streamEvents;
-  fetch?: typeof fetch;
 }
 
 /**
@@ -282,8 +322,9 @@ export interface RefreshOptions {
  * the next run does not ask again before `refreshDays`; a stored profile newer than anything the
  * relay returned is kept. Then every creator whose profile names a NIP-05 identifier is verified
  * (live lookups only for results missing or older than `nip05TtlDays`), so that the cache is warm
- * for `cachedNip05`. A host that answers "unavailable" five times in a row is skipped for the rest of
- * the run, and its cached rows are left alone. `fetched` counts the profiles read from the relay, `verified` the creators
+ * for `cachedNip05`. Lookups go out at most 5 a second. A host that answers "unavailable" five times
+ * in a row is skipped for the rest of the run, and its cached rows are left alone (but for verified
+ * handles more than 4 TTLs old, which are dropped). `fetched` counts the profiles read from the relay, `verified` the creators
  * whose handle verified.
  */
 export async function refreshProfiles(
@@ -337,10 +378,11 @@ export async function refreshProfiles(
 
   let verified = 0;
   const guard = hostGuard();
+  const pace = pacer(NIP05_REQUESTS_PER_SECOND, opts.sleep ?? defaultSleep);
   for (const pk of creators) {
     const content = state.profile(pk)?.content;
     if (claimedIdentifier(content) === undefined) continue;
-    if ((await verify(pk, content, state, cfg, { now, fetch: opts.fetch }, guard)) !== undefined) verified++;
+    if ((await verify(pk, content, state, cfg, { now, fetch: opts.fetch, random: opts.random }, guard, pace)) !== undefined) verified++;
   }
   return { fetched, verified };
 }

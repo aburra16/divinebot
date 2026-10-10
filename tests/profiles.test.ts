@@ -12,6 +12,8 @@ const DAY = 86_400;
 const IMR = "03c49dd3d68fdd15fc0bc7dff669d652af313408bfd6dde10daf27b02f54eb50";
 const OTHER = "b".repeat(64);
 const now = () => NOW;
+/** No pacing waits and no expiry jitter, for tests about something else. */
+const quiet = { sleep: async () => {}, random: () => 0 };
 
 const hex = (i: number) => i.toString(16).padStart(64, "0");
 
@@ -209,7 +211,7 @@ describe("verifiedNip05 and cachedNip05", () => {
     f: typeof fetch,
     pubkey = IMR,
     at: () => number = now,
-  ) => verifiedNip05(pubkey, content, state, cfg, { now: at, fetch: f });
+  ) => verifiedNip05(pubkey, content, state, cfg, { ...quiet, now: at, fetch: f });
 
   it("writes <u>@divine.video when both lookups return the pubkey", async () => {
     const { fetch } = divineFetch(IMR, IMR);
@@ -222,7 +224,7 @@ describe("verifiedNip05 and cachedNip05", () => {
       const fresh = openState(":memory:");
       const { fetch } = divineFetch(IMR, root);
       const c = { nip05: "_@imrdaviis.divine.video" };
-      expect(await verifiedNip05(IMR, c, fresh, cfg, { now, fetch })).toBe("_@imrdaviis.divine.video");
+      expect(await verifiedNip05(IMR, c, fresh, cfg, { ...quiet, now, fetch })).toBe("_@imrdaviis.divine.video");
       expect(cachedNip05(IMR, c, fresh)).toBe("_@imrdaviis.divine.video");
       fresh.close();
     }
@@ -463,7 +465,7 @@ describe("refreshProfiles", () => {
     addSource(video(hex(2), 3), "not a Divine video");
     addSource(video(hex(3), 4), null, "deleted");
     const { stream, calls } = fakeStream([profileEvent(hex(1), 100, { name: "one" })]);
-    const out = await refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch });
+    const out = await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(cfg.source.relay);
     expect(calls[0]!.filter).toMatchObject({ kinds: [0], authors: [hex(1)] });
@@ -481,7 +483,7 @@ describe("refreshProfiles", () => {
   it("sends author batches of at most 500", async () => {
     for (let i = 1; i <= 1200; i++) addSource(video(hex(i), i));
     const { stream, calls } = fakeStream([]);
-    await refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch });
     expect(calls.map((c) => c.filter.authors!.length)).toEqual([500, 500, 200]);
     const all = calls.flatMap((c) => c.filter.authors!);
     expect(new Set(all).size).toBe(1200);
@@ -503,7 +505,7 @@ describe("refreshProfiles", () => {
       ],
       { pageSize: 2 },
     );
-    const out = await refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch });
+    const out = await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch });
     expect(out.fetched).toBe(3);
     expect(state.profile(hex(1))?.content).toEqual({ name: "new" });
     expect(state.profile(hex(1))?.createdAt).toBe(300);
@@ -519,7 +521,7 @@ describe("refreshProfiles", () => {
       profileEvent(hex(4), 100, "null"),
       profileEvent(hex(5), 100, { name: "ok" }),
     ]);
-    await refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch });
     for (const i of [1, 2, 3, 4]) expect(creatorName(state.profile(hex(i))?.content)).toBeUndefined();
     expect(creatorName(state.profile(hex(5))?.content)).toBe("ok");
   });
@@ -531,7 +533,7 @@ describe("refreshProfiles", () => {
     state.putProfile(hex(1), { name: "fresh" }, 10, NOW - refresh + 100);
     state.putProfile(hex(2), { name: "stale" }, 10, NOW - refresh - 100);
     const { stream, calls } = fakeStream([profileEvent(hex(2), 500, { name: "renewed" })]);
-    await refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.filter.authors).toEqual([hex(2)]);
     expect(state.profile(hex(1))?.content).toEqual({ name: "fresh" });
@@ -542,7 +544,7 @@ describe("refreshProfiles", () => {
     addSource(video(hex(1), 1));
     state.putProfile(hex(1), { name: "fresh" }, 10, NOW);
     const { stream, calls } = fakeStream([]);
-    expect(await refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch })).toEqual({ fetched: 0, verified: 0 });
+    expect(await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch })).toEqual({ fetched: 0, verified: 0 });
     expect(calls).toHaveLength(0);
   });
 
@@ -553,7 +555,7 @@ describe("refreshProfiles", () => {
     state.putProfile(hex(1), { name: "kept" }, 500, stale);
     state.putProfile(hex(2), { name: "newer" }, 500, stale);
     const { stream } = fakeStream([profileEvent(hex(2), 100, { name: "older" })]);
-    await refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch });
     expect(state.profile(hex(1))).toEqual({ content: { name: "kept" }, createdAt: 500, fetchedAt: NOW });
     expect(state.profile(hex(2))).toEqual({ content: { name: "newer" }, createdAt: 500, fetchedAt: NOW });
   });
@@ -561,10 +563,10 @@ describe("refreshProfiles", () => {
   it("records an empty profile for an author with none, so the next run does not ask again", async () => {
     addSource(video(hex(1), 1));
     const first = fakeStream([]);
-    await refreshProfiles(cfg, state, { now, stream: first.stream, fetch: noFetch.fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream: first.stream, fetch: noFetch.fetch });
     expect(state.profile(hex(1))).toEqual({ content: {}, createdAt: 0, fetchedAt: NOW });
     const second = fakeStream([]);
-    await refreshProfiles(cfg, state, { now, stream: second.stream, fetch: noFetch.fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream: second.stream, fetch: noFetch.fetch });
     expect(second.calls).toHaveLength(0);
   });
 
@@ -573,14 +575,14 @@ describe("refreshProfiles", () => {
     const { stream } = fakeStream([profileEvent(hex(1), 100, { name: "one" })]);
     const wrapped: typeof streamEvents = async (url, filter, o, onPage) =>
       stream(url, filter, o, (events) => onPage([...events, profileEvent(hex(9), 100, { name: "stranger" })]));
-    await refreshProfiles(cfg, state, { now, stream: wrapped, fetch: noFetch.fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream: wrapped, fetch: noFetch.fetch });
     expect(state.profile(hex(9))).toBeUndefined();
   });
 
   it("throws on a stalled read and stores nothing from that batch", async () => {
     addSource(video(hex(1), 1));
     const { stream } = fakeStream([profileEvent(hex(1), 100, { name: "one" })], { stalledAt: 1234 });
-    await expect(refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch })).rejects.toThrow(/1234/);
+    await expect(refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch })).rejects.toThrow(/1234/);
     expect(state.profile(hex(1))).toBeUndefined();
   });
 
@@ -589,7 +591,7 @@ describe("refreshProfiles", () => {
     const events = [profileEvent(hex(1), 100, { name: "first" })];
     let n = 0;
     const { stream } = fakeStream(events, { failFor: () => ++n === 2 });
-    await expect(refreshProfiles(cfg, state, { now, stream, fetch: noFetch.fetch })).rejects.toThrow(/closed the connection/);
+    await expect(refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: noFetch.fetch })).rejects.toThrow(/closed the connection/);
     expect(state.profile(hex(1))?.content).toEqual({ name: "first" });
     expect(state.profile(hex(550))).toBeUndefined();
   });
@@ -611,7 +613,7 @@ describe("refreshProfiles", () => {
       if (url === "https://example.com/.well-known/nostr.json?name=two") return json({ names: { two: OTHER } });
       return undefined;
     });
-    const out = await refreshProfiles(cfg, state, { now, stream, fetch });
+    const out = await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch });
     expect(out).toEqual({ fetched: 3, verified: 1 });
     expect(calls.map((c) => c.url).sort()).toEqual([
       "https://divine.video/.well-known/nostr.json?name=imrdaviis",
@@ -635,7 +637,7 @@ describe("refreshProfiles", () => {
     state.putNip05("two@example.com", hex(2), NOW - ttl - 100);
     const { fetch, calls } = fakeFetch(() => json({ names: { one: hex(1), two: hex(2) } }));
     const { stream } = fakeStream([]);
-    const out = await refreshProfiles(cfg, state, { now, stream, fetch });
+    const out = await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch });
     expect(calls.map((c) => c.url)).toEqual(["https://example.com/.well-known/nostr.json?name=two"]);
     expect(out.verified).toBe(2);
   });
@@ -650,7 +652,7 @@ describe("refreshProfiles", () => {
     state.putNip05("_@two.divine.video", hex(2), NOW - ttl - 5);
     const down = fakeFetch(() => new Response("bad gateway", { status: 502 }));
     const { stream } = fakeStream([]);
-    const out = await refreshProfiles(cfg, state, { now, stream, fetch: down.fetch });
+    const out = await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch: down.fetch });
     expect(out.verified).toBe(2);
     expect(state.nip05("one@example.com")).toEqual({ pubkey: hex(1), checkedAt: NOW - ttl - 5 });
     expect(state.nip05("_@two.divine.video")).toEqual({ pubkey: hex(2), checkedAt: NOW - ttl - 5 });
@@ -668,7 +670,7 @@ describe("refreshProfiles", () => {
       url.startsWith("https://example.com/") ? new Response("down", { status: 503 }) : json({ names: { other: hex(20) } }),
     );
     const { stream } = fakeStream([]);
-    const out = await refreshProfiles(cfg, state, { now, stream, fetch });
+    const out = await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch });
     expect(calls.filter((c) => c.url.startsWith("https://example.com/"))).toHaveLength(5);
     expect(calls.filter((c) => c.url.startsWith("https://elsewhere.example/"))).toHaveLength(1);
     for (let i = 1; i <= 8; i++) expect(state.nip05(`u${i}@example.com`), String(i)).toBeUndefined();
@@ -682,7 +684,7 @@ describe("refreshProfiles", () => {
     }
     const { fetch, calls } = fakeFetch(() => new Error("timeout"));
     const { stream } = fakeStream([]);
-    await refreshProfiles(cfg, state, { now, stream, fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch });
     expect(calls).toHaveLength(5);
   });
 
@@ -695,7 +697,7 @@ describe("refreshProfiles", () => {
     let n = 0;
     const { fetch, calls } = fakeFetch(() => (++n % 5 === 0 ? json({ names: {} }) : new Response("down", { status: 503 })));
     const { stream } = fakeStream([]);
-    await refreshProfiles(cfg, state, { now, stream, fetch });
+    await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch });
     expect(calls).toHaveLength(12);
   });
 
@@ -704,6 +706,76 @@ describe("refreshProfiles", () => {
     state.putProfile(hex(1), { nip05: "one@example.com" }, 1, NOW);
     const { fetch } = fakeFetch(() => new Error("socket hang up"));
     const { stream } = fakeStream([]);
-    expect(await refreshProfiles(cfg, state, { now, stream, fetch })).toEqual({ fetched: 0, verified: 0 });
+    expect(await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch })).toEqual({ fetched: 0, verified: 0 });
+  });
+
+  describe("politeness and expiry", () => {
+    const ttl = cfg.profiles.nip05TtlDays * DAY;
+    function creators(n: number, nip05: (i: number) => string): void {
+      for (let i = 1; i <= n; i++) {
+        addSource(video(hex(i), i));
+        state.putProfile(hex(i), { nip05: nip05(i) }, 1, NOW);
+      }
+    }
+
+    it("sends at most 5 NIP-05 requests per second", async () => {
+      // Distinct hosts, so the breaker never trips, and divine.video handles, which take two lookups each.
+      creators(7, (i) => (i <= 4 ? `u${i}@host${i}.example` : `_@user${i}.divine.video`));
+      let clock = 0;
+      const times: number[] = [];
+      const { fetch } = fakeFetch((url) => {
+        times.push(clock);
+        const name = new URL(url).searchParams.get("name")!;
+        const i = Number(/(\d+)/.exec(url)![1]);
+        return json({ names: { [name]: hex(i) } });
+      });
+      const sleep = async (ms: number) => void (clock += ms);
+      const { stream } = fakeStream([]);
+      await refreshProfiles(cfg, state, { now, stream, fetch, sleep, random: () => 0 });
+
+      expect(times).toHaveLength(10);
+      for (const t of times) expect(times.filter((u) => u >= t && u < t + 1000).length).toBeLessThanOrEqual(5);
+      expect(clock).toBe(1000);
+    });
+
+    it("spreads expiry: a stored answer's checkedAt is now minus up to one day", async () => {
+      creators(3, (i) => `u${i}@host${i}.example`);
+      const draws = [0, 0.5, 0.999999];
+      const random = () => draws.shift()!;
+      const { fetch } = fakeFetch((url) => json({ names: { [new URL(url).searchParams.get("name")!]: OTHER } }));
+      const { stream } = fakeStream([]);
+      await refreshProfiles(cfg, state, { now, stream, fetch, sleep: quiet.sleep, random });
+
+      expect(state.nip05("u1@host1.example")!.checkedAt).toBe(NOW);
+      expect(state.nip05("u2@host2.example")!.checkedAt).toBe(NOW - DAY / 2);
+      const last = state.nip05("u3@host3.example")!.checkedAt;
+      expect(last).toBeGreaterThan(NOW - DAY);
+      expect(last).toBeLessThanOrEqual(NOW - DAY + 1);
+    });
+
+    it("drops a verified handle older than 4 times the TTL when its lookup is still unavailable, and keeps a younger one", async () => {
+      creators(2, (i) => `u${i}@host${i}.example`);
+      state.putNip05("u1@host1.example", hex(1), NOW - 4 * ttl - 1);
+      state.putNip05("u2@host2.example", hex(2), NOW - 4 * ttl + 100);
+      const { fetch, calls } = fakeFetch(() => new Response("down", { status: 503 }));
+      const { stream } = fakeStream([]);
+      const out = await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch });
+
+      expect(calls).toHaveLength(2);
+      expect(state.nip05("u1@host1.example")).toEqual({ pubkey: null, checkedAt: NOW });
+      expect(state.nip05("u2@host2.example")).toEqual({ pubkey: hex(2), checkedAt: NOW - 4 * ttl + 100 });
+      expect(out.verified).toBe(1);
+    });
+
+    it("drops such a handle too when its host was skipped after repeated failures", async () => {
+      creators(6, (i) => `_@user${i}.divine.video`);
+      state.putNip05("_@user6.divine.video", hex(6), NOW - 4 * ttl - 1);
+      const { fetch, calls } = fakeFetch(() => new Error("timeout"));
+      const { stream } = fakeStream([]);
+      await refreshProfiles(cfg, state, { ...quiet, now, stream, fetch });
+
+      expect(calls).toHaveLength(5);
+      expect(state.nip05("_@user6.divine.video")).toEqual({ pubkey: null, checkedAt: NOW });
+    });
   });
 });
